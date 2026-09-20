@@ -94,6 +94,15 @@ the button is simply not offered for unverifiable apps since macOS 15. Re-adding
 it does not require implementing any approval logic; we only need to inject a
 button that produces the right `runModal` return value.
 
+**Other dialog variants share this builder (verified):** the benign
+first-launch alert for *notarized* apps ("…downloaded from the Internet. Are
+you sure you want to open it?") is built by the same method with buttons
+`[tag=1000 Open] [tag=1002 Cancel]`. Tag 1000 is already an open path, and
+injecting 105 there is a dead button (verified: the click dismisses the
+alert; depending on state it either launches with no auth or does nothing —
+either way it is wrong UI). The hook therefore skips any alert that already
+contains tag 105 or tag 1000.
+
 ## 3. Verified: injection vector
 
 - No `__RESTRICT` segment; code signature `flags=0x0` (platform binary, no

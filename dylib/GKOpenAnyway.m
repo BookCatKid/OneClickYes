@@ -29,9 +29,13 @@ static id hook_alertForURL(id self, SEL _cmd, id url, id info) {
     BOOL hasApprove = NO;
     for (NSButton *b in [alert buttons]) {
         [desc appendFormat:@" [tag=%ld title=%@]", (long)b.tag, b.title];
-        // tag 105 = Apple's "Open Anyway" override button; 100=Cancel, 101=Done,
-        // 102=Move to Trash are dismiss/deny tags, NOT approve buttons.
-        if (b.tag == 105 || [b.title isEqualToString:@"Open Anyway"]) hasApprove = YES;
+        // Approve-capable buttons: tag 105 = native "Open Anyway" override,
+        // tag 1000 = "Open" on the benign first-launch dialog for notarized
+        // apps. 100=Cancel, 101=Done, 102=Move to Trash are dismiss/deny.
+        // On dialogs that already offer an open path the tag-105 override is
+        // a no-op (verified: click dismisses, no auth, no launch).
+        if (b.tag == 105 || b.tag == 1000 ||
+            [b.title isEqualToString:@"Open Anyway"]) hasApprove = YES;
     }
     gklog(@"alert=%p msg='%@' info='%@' buttons:%@", alert, [alert messageText], [alert informativeText], desc);
     if (!hasApprove) {
