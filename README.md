@@ -36,6 +36,10 @@ open GKOpenAnyway.app
 Click **Install & Enable**. Then **Test the dialog** to see it working —
 the app shows a green confirmation once the test app actually launches.
 
+Option: **Make "Open Anyway" the default button** gives the button accent
+styling and Return-key activation (it demotes Apple's existing default).
+Toggling takes effect on the next dialog — no restart needed.
+
 Or from the command line:
 
 ```sh

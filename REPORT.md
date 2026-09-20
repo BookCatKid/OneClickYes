@@ -295,6 +295,22 @@ consequence: uninstall relies on **deleting the dylib file** (a missing
 insert path is skipped by dyld on respawn) — the env var itself is cosmetic
 cleanup for future logins.
 
+**In-place dylib replacement corrupts code-signing state (verified):**
+updating the installed dylib with a truncating `cp` (same inode) while any
+process holds it mapped leaves stale signature state on the vnode. Every
+subsequent load of that path then fails inside dyld with
+
+    fcntl(fd, F_ADDFILESIGS_RETURN) failed with errno=37 (EALREADY)
+
+— `codesign -v` passes and the bytes are correct, but the kernel refuses the
+signature, so `launchd`-spawned processes die with
+`OS_REASON_CODESIGNING`. Because `setenv` is session-wide this manifested as
+a mass crash-storm of GUI-domain children plus a CoreServicesUIAgent
+crash-loop. The identical bytes load fine from a different path (fresh
+inode). **Fix: always install atomically** — copy to a temp name in the same
+directory, sign the temp, `rename()` over the final path. The installer now
+does this; `clang -o` output is already safe (new file each build).
+
 ## 10. Installer app
 
 `GKOpenAnyway.app` (built by `build-app.sh`) — a small AppKit installer,
@@ -313,6 +329,14 @@ no root required (everything runs in the user's gui domain):
   (`/tmp/gktest_LAUNCHED_<name>`) from `main()` — the installer watches for it
   and shows a green "Test app launched — the Open Anyway button works" line
   once the launch actually completes (120s timeout otherwise).
+- **Make "Open Anyway" the default button** (optional checkbox): creates a
+  flag file in the support dir. When present, the dylib clears `keyEquivalent`
+  from Apple's existing default button and sets the tag-105 button's
+  `keyEquivalent` to Return — giving it accent styling and Return-key
+  activation. Read per-dialog, so toggling needs no restart. Verified: with
+  the flag, Open Anyway renders accent-blue and pressing Return enters the
+  LAContext auth flow; without it, Apple's default ("Move to Trash") keeps
+  the accent.
 - Status panel shows SIP state, LaunchAgent presence, env state, and whether
   the running agent has the hook loaded (plus last hook activity timestamp).
 

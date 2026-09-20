@@ -17,6 +17,9 @@ static NSString *agentPlistPath(void) {
             @"Library/LaunchAgents/local.gkopenanyway.plist"];
 }
 static NSString *logPath(void) { return @"/tmp/gkopenanyway.log"; }
+static NSString *primaryFlagPath(void) {
+    return [supportDir() stringByAppendingPathComponent:@"primary"];
+}
 
 static NSString *run(NSString *launch, NSArray<NSString *> *args, int *status) {
     NSTask *t = [NSTask new];
@@ -91,7 +94,7 @@ static void writeAgentPlist(void) {
 @property (nonatomic) NSTextField *status;
 @property (nonatomic) NSTextField *detail;
 @property (nonatomic) NSTextField *testResult;
-@property (nonatomic) NSButton *installBtn, *uninstallBtn;
+@property (nonatomic) NSButton *installBtn, *uninstallBtn, *primaryCb;
 @property (nonatomic) BOOL testPending;
 @property (nonatomic) NSDate *testStart;
 @property (nonatomic) NSString *testMarker;
@@ -145,12 +148,19 @@ static void writeAgentPlist(void) {
                    attributes:nil error:nil];
     NSString *src = [[[NSBundle mainBundle] resourcePath]
         stringByAppendingPathComponent:@"GKOpenAnyway.dylib"];
-    [fm removeItemAtPath:dylibPath() error:nil];
-    if (![fm copyItemAtPath:src toPath:dylibPath() error:nil]) {
+    NSString *tmp = [supportDir()
+        stringByAppendingPathComponent:@".GKOpenAnyway.dylib.tmp"];
+    [fm removeItemAtPath:tmp error:nil];
+    if (![fm copyItemAtPath:src toPath:tmp error:nil]) {
         self.detail.stringValue = @"Failed to copy dylib from app bundle.";
         return;
     }
-    run(@"/usr/bin/codesign", @[@"-f", @"-s", @"-", dylibPath()], nil);
+    run(@"/usr/bin/codesign", @[@"-f", @"-s", @"-", tmp], nil);
+    if (rename(tmp.fileSystemRepresentation,
+               dylibPath().fileSystemRepresentation) != 0) {
+        self.detail.stringValue = @"Failed to install dylib.";
+        return;
+    }
 
     writeAgentPlist();
     run(@"/bin/launchctl",
@@ -173,6 +183,17 @@ static void writeAgentPlist(void) {
     [[NSFileManager defaultManager] removeItemAtPath:supportDir() error:nil];
     self.detail.stringValue = @"Uninstalled. Nothing was left running or modified.";
     [self refresh];
+}
+
+- (void)togglePrimary:(NSButton *)cb {
+    if (cb.state == NSControlStateValueOn) {
+        [[NSFileManager defaultManager] createDirectoryAtPath:supportDir()
+            withIntermediateDirectories:YES attributes:nil error:nil];
+        [@"" writeToFile:primaryFlagPath() atomically:YES
+             encoding:NSUTF8StringEncoding error:nil];
+    } else {
+        [[NSFileManager defaultManager] removeItemAtPath:primaryFlagPath() error:nil];
+    }
 }
 
 - (void)testDialog:(id)sender {
@@ -257,8 +278,16 @@ static void writeAgentPlist(void) {
     [v addSubview:test];
 
     self.testResult = [NSTextField wrappingLabelWithString:@""];
-    self.testResult.frame = NSMakeRect(20, 36, 480, 30);
+    self.testResult.frame = NSMakeRect(20, 54, 480, 20);
     [v addSubview:self.testResult];
+
+    self.primaryCb = [NSButton checkboxWithTitle:
+        @"Make “Open Anyway” the default button (accent color, Return key)"
+                                          target:self action:@selector(togglePrimary:)];
+    self.primaryCb.frame = NSMakeRect(20, 30, 480, 22);
+    self.primaryCb.state = [[NSFileManager defaultManager]
+        fileExistsAtPath:primaryFlagPath()] ? NSControlStateValueOn : NSControlStateValueOff;
+    [v addSubview:self.primaryCb];
 
     [w center];
     [w makeKeyAndOrderFront:nil];

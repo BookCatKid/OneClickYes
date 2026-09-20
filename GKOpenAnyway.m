@@ -38,6 +38,22 @@ static id hook_alertForURL(id self, SEL _cmd, id url, id info) {
         NSButton *btn = [alert addButtonWithTitle:@"Open Anyway"];
         btn.tag = 105;   // -> performOverrideAuthenticationWithError: then approveUpdatingQuarantineTarget:
         btn.keyEquivalent = @"";
+        // Optional: make it the default (accent, Return-activated) button when
+        // the flag file exists. NSAlert's default button is whichever has
+        // keyEquivalent == Return.
+        const char *home = getenv("HOME");
+        if (home) {
+            NSString *flag = [[NSString stringWithUTF8String:home]
+                stringByAppendingPathComponent:
+                @"Library/Application Support/GKOpenAnyway/primary"];
+            if ([[NSFileManager defaultManager] fileExistsAtPath:flag]) {
+                for (NSButton *b in [alert buttons])
+                    if ([b.keyEquivalent isEqualToString:@"\r"])
+                        b.keyEquivalent = @"";
+                btn.keyEquivalent = @"\r";
+                gklog(@"made Open Anyway the default button");
+            }
+        }
         gklog(@"added Open Anyway button (tag 105)");
     }
     return alert;
