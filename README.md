@@ -36,6 +36,8 @@ open GKOpenAnyway.app
 
 ## Using the app
 
+![GKOpenAnyway installer app](images/app-window.png)
+
 1. **Install & Enable** — installs the payload and turns the feature on.
    No root needed, nothing stays running.
 2. **Test the dialog** — opens a quarantined unsigned test app so you can
