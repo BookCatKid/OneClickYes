@@ -114,6 +114,15 @@ button that produces the right `runModal` return value.
   gained that slice. Build with all four:
   `-arch arm64 -arch arm64e -arch arm64e.x1 -arch x86_64` (x86_64 covers
   Rosetta processes). `clang` accepts `arm64e.x1` directly.
+- **Cascade failure mode (verified):** while a bad insert is active, on-demand
+  services crash-loop at spawn (`OS_REASON_DYLD`) and accumulate
+  `successive crashes`; launchd then throttles them into `spawn scheduled`,
+  so they stay dead *after* the dylib is fixed — and every client doing
+  synchronous XPC to them deadlocks (Messages: `DaemonConnectionSetup` →
+  imagent → IMDPersistenceAgent → Contacts init → contactsd, wedged at 18
+  crashes / 142 runs). `launchctl kickstart` does not override the throttle;
+  remediation is `launchctl bootout <dom>/<svc>` +
+  `launchctl bootstrap <dom> <plist>` to reset the crash history.
 
 ## 4. Proof of concept (verified)
 
