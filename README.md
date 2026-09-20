@@ -1,16 +1,15 @@
 # GKOpenAnyway
 
-Adds an **"Open Anyway"** button directly to the macOS Gatekeeper
-"…could not verify… / Not Opened" dialog — the button Apple compiles into the
-OS but never displays for unverified software.
+A small macOS app that adds an **"Open Anyway"** button directly to the
+Gatekeeper "…could not verify… / Not Opened" dialog — the button Apple
+compiles into the OS but never displays for unverified software.
 
 Instead of the usual flow (dismiss → System Settings → Privacy & Security →
 Open Anyway → re-open the app), you get a one-click approve button in the
-dialog itself. It uses **Apple's own per-app approval path**: tag 105 →
-`LAContext` authentication (Touch ID/password) →
-`approveUpdatingQuarantineTarget:` → LaunchServices resumes the open.
-Nothing is patched on disk, nothing global is disabled, and Gatekeeper stays
-fully active.
+dialog itself. It uses **Apple's own per-app approval path** — Touch
+ID/password → per-app quarantine approval → the app opens. Nothing is
+patched on disk, nothing global is disabled, and Gatekeeper stays fully
+active.
 
 | Before | After |
 |---|---|
@@ -19,76 +18,72 @@ fully active.
 ## Requirements
 
 - macOS 27 (verified on build 26A428, Apple Silicon)
-- **SIP disabled** (`csrutil disable` in Recovery) — required for dyld
-  insertion into platform binaries
-- An admin account (Touch ID/password is still requested by Apple when you
-  approve — this tool does not bypass authentication)
+- **SIP disabled** (`csrutil disable` in Recovery)
+- An admin account — Apple still asks for Touch ID/password when you
+  approve; this tool does not bypass authentication
 
-## Install
+## Get the app
 
-Build and run the installer app:
+Download `GKOpenAnyway.app.zip` from
+[Releases](../../releases), unzip, and open `GKOpenAnyway.app`.
+
+Or build it yourself (needs Xcode command line tools):
 
 ```sh
 ./build-app.sh
 open GKOpenAnyway.app
 ```
 
-Click **Install & Enable**. Then **Test the dialog** to see it working —
-the app shows a green confirmation once the test app actually launches.
+## Using the app
 
-Option: **Make "Open Anyway" the default button** gives the button accent
-styling and Return-key activation (it demotes Apple's existing default).
-Toggling takes effect on the next dialog — no restart needed.
+1. **Install & Enable** — installs the payload and turns the feature on.
+   No root needed, nothing stays running.
+2. **Test the dialog** — opens a quarantined unsigned test app so you can
+   see the button; the app shows a green confirmation once the test app
+   actually launches through the new button.
+3. **Make "Open Anyway" the default button** *(optional)* — gives the
+   button accent styling and Return-key activation. Takes effect on the
+   next dialog.
+4. **Uninstall** — removes everything and restarts the agent clean.
+   Fully reversible.
 
-Or from the command line:
+The installer app does not need to stay open — persistence across login is
+handled by a one-shot LaunchAgent that exits immediately.
 
-```sh
-./install.sh      # this session
-./uninstall.sh    # full removal
-```
+## How it works (short version)
 
-Persistence across login is handled by a one-shot LaunchAgent
-(`local.gkopenanyway`) — it re-applies the env and exits. Nothing stays
-resident.
+`CoreServicesUIAgent` owns the dialog (a plain `NSAlert`). A tiny
+self-gating dylib is inserted via `DYLD_INSERT_LIBRARIES`; it returns
+immediately in every process except CoreServicesUIAgent, where it appends a
+button with tag 105 — Apple's own "Open Anyway" dispatch tag, which is
+already wired end-to-end to `LAContext` auth and per-app approval. The
+button is hidden natively because "fast Gatekeeper override" mode is
+reported `inactive` by an unconditional stub in syspolicyd — there is no
+official way to enable it.
 
-## How it works
+Full reverse-engineering details: **[REPORT.md](REPORT.md)**.
 
-`CoreServicesUIAgent` owns the dialog (a plain `NSAlert` built by
-`GKQuarantineResolver`). A small self-gating dylib is inserted via
-`DYLD_INSERT_LIBRARIES`; its constructor returns immediately in every process
-except CoreServicesUIAgent, where it swizzles
-`-[GKQuarantineResolver alertForURL:malwareInfo:]` and appends a button with
-tag 105 — Apple's own "Open Anyway" dispatch tag.
-
-The button isn't shown natively because its inclusion is gated on
-"fast Gatekeeper override" mode, which syspolicyd reports as `inactive` via an
-unconditional stub in this build — there is no official way to enable it.
-
-Full reverse-engineering details, verified findings, addresses, and
-alternatives: **[REPORT.md](REPORT.md)**.
-
-## Files
+## Repository layout
 
 | Path | Purpose |
 |---|---|
-| `GKOpenAnyway.m` | The injected dylib (self-gating swizzle) |
-| `app/` | Installer app source (AppKit, no dependencies) |
+| `app/` | Installer app source (AppKit, no dependencies) — the main thing |
+| `dylib/` | The injected payload source (self-gating swizzle) |
 | `build-app.sh` | Builds dylib + `GKOpenAnyway.app` |
-| `install.sh` / `uninstall.sh` | CLI install/remove |
-| `local.gkopenanyway.plist` | LaunchAgent template (login persistence) |
+| `cli/` | Optional shell install/remove scripts |
 | `REPORT.md` | Full technical report |
+| `images/` | Dialog screenshots |
 
 ## Safety
 
 - Per-app approval only; no global quarantine removal, no `spctl` changes.
-- Fully reversible: Uninstall (or `uninstall.sh`) unsets the env, restarts
-  the agent clean, and deletes all installed files.
+- Fully reversible via the app's Uninstall button (or `cli/uninstall.sh`).
 - The dylib touches nothing outside CoreServicesUIAgent.
-- Breaks nothing if Apple changes internals: the swizzle is by selector name
-  and degrades gracefully (hook simply won't install).
+- If Apple renames the private classes, the hook simply won't install —
+  nothing breaks.
 
 ## Caveats
 
 - Requires SIP to remain disabled.
-- Apple still requires admin authentication on approve — by design.
+- Admin authentication is still required on approve — by design.
 - macOS updates can rename/remove the private classes; verify after updates.

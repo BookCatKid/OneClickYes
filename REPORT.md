@@ -108,7 +108,7 @@ button that produces the right `runModal` return value.
 
 ## 4. Proof of concept (verified)
 
-`GKOpenAnyway.m` (~50 lines): constructor self-gates to CoreServicesUIAgent,
+`dylib/GKOpenAnyway.m` (~75 lines): constructor self-gates to CoreServicesUIAgent,
 `method_setImplementation`-swizzles `alertForURL:malwareInfo:`; after the
 original returns, if no button already has tag 105 it calls
 `addButtonWithTitle:@"Open Anyway"` + `setTag:105`.
@@ -161,19 +161,19 @@ Verified results (unsigned, quarantined test app):
 
 ```sh
 # build
-clang -arch arm64 -arch arm64e -dynamiclib -o GKOpenAnyway.dylib GKOpenAnyway.m \
+clang -arch arm64 -arch arm64e -dynamiclib -o GKOpenAnyway.dylib dylib/GKOpenAnyway.m \
   -framework Foundation -framework AppKit
 codesign -s - GKOpenAnyway.dylib
 
 # activate (this session)
-./install.sh        # = launchctl setenv + kickstart -k gui/$(id -u)/com.apple.coreservices.uiagent
+cli/install.sh        # = launchctl setenv + kickstart -k gui/$(id -u)/com.apple.coreservices.uiagent
 
 # persist across login (optional)
 cp local.gkopenanyway.plist ~/Library/LaunchAgents/
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/local.gkopenanyway.plist
 
 # remove
-./uninstall.sh
+cli/uninstall.sh
 ```
 
 Log: `/tmp/gkopenanyway.log` (hook installs, alerts seen, buttons added).

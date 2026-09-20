@@ -5,7 +5,7 @@ cd "$(dirname "$0")"
 OUT="$PWD/GKOpenAnyway.app"
 
 # --- payload dylib (universal; arm64e slice is required for platform binaries)
-clang -arch arm64 -arch arm64e -dynamiclib -o GKOpenAnyway.dylib GKOpenAnyway.m \
+clang -arch arm64 -arch arm64e -dynamiclib -o GKOpenAnyway.dylib dylib/GKOpenAnyway.m \
   -framework Foundation -framework AppKit
 codesign -f -s - GKOpenAnyway.dylib
 
