@@ -11,9 +11,9 @@ ID/password → per-app quarantine approval → the app opens. Nothing is
 patched on disk, nothing global is disabled, and Gatekeeper stays fully
 active.
 
-| Before | After |
-|---|---|
-| ![Stock Gatekeeper dialog: Move to Trash, Done](images/dialog-before.png) | ![Patched dialog: Move to Trash, Done, Open Anyway](images/dialog-after.png) |
+| Before | After | After + default-button option |
+|---|---|---|
+| ![Stock Gatekeeper dialog: Move to Trash, Done](images/dialog-before.png) | ![Patched dialog: Move to Trash, Done, Open Anyway](images/dialog-after.png) | ![Open Anyway as the accent default button](images/dialog-primary.png) |
 
 ## Requirements
 
