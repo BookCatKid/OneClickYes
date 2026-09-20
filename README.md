@@ -12,6 +12,10 @@ dialog itself. It uses **Apple's own per-app approval path**: tag 105 →
 Nothing is patched on disk, nothing global is disabled, and Gatekeeper stays
 fully active.
 
+| Before | After |
+|---|---|
+| ![Stock Gatekeeper dialog: Move to Trash, Done](images/dialog-before.png) | ![Patched dialog: Move to Trash, Done, Open Anyway](images/dialog-after.png) |
+
 ## Requirements
 
 - macOS 27 (verified on build 26A428, Apple Silicon)

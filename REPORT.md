@@ -286,6 +286,15 @@ the process is CoreServicesUIAgent — no hooks, no threads, no ObjC messages in
 any other process (~nanoseconds per spawn, then the dylib sits idle).
 Effective scope = the Gatekeeper dialog process only.
 
+**Service env is a snapshot (verified):** once a service has spawned, its
+`inherited environment` is frozen — `launchctl unsetenv` *and* a later
+`setenv` to a different value do NOT change what a `kickstart`-respawned
+agent receives. Only `launchctl debug --environment` (one-shot, root)
+overlays it for a single spawn; the snapshot returns next respawn. Practical
+consequence: uninstall relies on **deleting the dylib file** (a missing
+insert path is skipped by dyld on respawn) — the env var itself is cosmetic
+cleanup for future logins.
+
 ## 10. Installer app
 
 `GKOpenAnyway.app` (built by `build-app.sh`) — a small AppKit installer,
