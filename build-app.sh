@@ -4,8 +4,12 @@ set -e
 cd "$(dirname "$0")"
 OUT="$PWD/GKOpenAnyway.app"
 
-# --- payload dylib (universal; arm64e slice is required for platform binaries)
-clang -arch arm64 -arch arm64e -dynamiclib -o GKOpenAnyway.dylib dylib/GKOpenAnyway.m \
+# --- payload dylib (must have a slice for every arch in the domain:
+#     dyld aborts the whole process if an inserted dylib has no matching
+#     slice — arm64e for platform binaries, arm64e.x1 for x1-ABI apps like
+#     Mail/Messages, x86_64 for Rosetta apps, arm64 for anything else)
+clang -arch arm64 -arch arm64e -arch arm64e.x1 -arch x86_64 -dynamiclib \
+  -o GKOpenAnyway.dylib dylib/GKOpenAnyway.m \
   -framework Foundation -framework AppKit
 codesign -f -s - GKOpenAnyway.dylib
 

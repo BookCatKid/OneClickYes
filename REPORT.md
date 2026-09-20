@@ -105,6 +105,15 @@ button that produces the right `runModal` return value.
 - Deliver via: `launchctl setenv DYLD_INSERT_LIBRARIES <dylib>` then
   `launchctl kickstart -k gui/<uid>/com.apple.coreservices.uiagent`.
 - Fully reversible: `launchctl unsetenv` + kickstart. No system files touched.
+- **The payload must carry a slice for every architecture in the domain
+  (verified):** dyld *aborts the entire process* if an inserted dylib has no
+  slice matching the running architecture — the self-gating constructor
+  never gets a chance to run. macOS 27 system binaries ship `arm64e` +
+  `arm64e.x1` (cpusubtype 12|0x80 — a newer ptrauth ABI variant); Mail and
+  Messages spawn as `arm64e.x1` and were killed at launch until the dylib
+  gained that slice. Build with all four:
+  `-arch arm64 -arch arm64e -arch arm64e.x1 -arch x86_64` (x86_64 covers
+  Rosetta processes). `clang` accepts `arm64e.x1` directly.
 
 ## 4. Proof of concept (verified)
 
