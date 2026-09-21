@@ -29,6 +29,19 @@ codesign -f -s - /tmp/gkbuild/OCYProbe.app
 # --- installer app
 rm -rf "$OUT"
 mkdir -p "$OUT/Contents/MacOS" "$OUT/Contents/Resources"
+
+# icon: AppIcon-1024.png -> .iconset -> .icns
+ICONSET=/tmp/gkbuild/AppIcon.iconset
+rm -rf "$ICONSET" && mkdir -p "$ICONSET"
+for spec in "16 16" "32 16x16@2x" "32 32" "64 32x32@2x" "128 128" \
+            "256 128x128@2x" "256 256" "512 256x256@2x" "512 512" \
+            "1024 512x512@2x"; do
+  px=${spec%% *}; nm=${spec##* }
+  sips -z "$px" "$px" assets/AppIcon-1024.png \
+    --out "$ICONSET/icon_${nm}.png" >/dev/null
+done
+iconutil -c icns "$ICONSET" -o "$OUT/Contents/Resources/AppIcon.icns"
+
 clang -fobjc-arc -arch arm64 -o "$OUT/Contents/MacOS/OneClickYes" app/main.m \
   -framework Cocoa -framework ServiceManagement
 cp app/Info.plist "$OUT/Contents/Info.plist"
