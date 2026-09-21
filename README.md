@@ -1,5 +1,7 @@
 # OneClickYes
 
+<img src="assets/AppIcon-1024.png" width="128" align="right" alt="OneClickYes app icon">
+
 A small macOS app that adds the missing approve button to two kinds of
 system dialogs that otherwise force you through System Settings:
 
