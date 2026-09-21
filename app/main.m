@@ -155,7 +155,6 @@ static void migrateLegacyInstall(void) {
 
 @interface GKDelegate : NSObject <NSApplicationDelegate>
 @property (nonatomic) NSTextField *globalStatus;
-@property (nonatomic) NSTextField *message;
 @property (nonatomic) NSSegmentedControl *seg;
 @property (nonatomic) NSView *gkPane, *tccPane;
 @property (nonatomic) NSTextField *gkStatus, *tccStatus;
@@ -274,7 +273,7 @@ static NSBox *card(NSRect f) {
              gkLoaded ? @"running, hook active" :
              (agent ? @"running, hook NOT loaded yet" : @"loads on next Gatekeeper dialog")], nil),
     ]);
-    centerLabel(self.gkStatus, 14, 472, 96, 26);
+    centerLabel(self.gkStatus, 14, 472, 118, 26);
 
     // --- Permissions pane ---
     pid_t warn = procPID(kWarnSvc);
@@ -289,7 +288,7 @@ static NSBox *card(NSRect f) {
             [NSString stringWithFormat:@"universalAccessAuthWarn: %@",
              tccLoaded ? @"running, hook active" : @"loads on next permission dialog"], nil),
     ]);
-    centerLabel(self.tccStatus, 14, 472, 96, 26);
+    centerLabel(self.tccStatus, 14, 472, 118, 26);
 
     // A test app proves success by writing its marker file from its own code.
     [self pollPending:&_gkPending marker:self.gkMarker start:self.gkStart
@@ -333,13 +332,13 @@ static NSBox *card(NSRect f) {
         stringByAppendingPathComponent:@".OneClickYes.dylib.tmp"];
     [fm removeItemAtPath:tmp error:nil];
     if (![fm copyItemAtPath:src toPath:tmp error:nil]) {
-        self.message.stringValue = @"Failed to copy dylib from app bundle.";
+        NSLog(@"OneClickYes: failed to copy dylib from app bundle");
         return;
     }
     run(@"/usr/bin/codesign", @[@"-f", @"-s", @"-", tmp], nil);
     if (rename(tmp.fileSystemRepresentation,
                dylibPath().fileSystemRepresentation) != 0) {
-        self.message.stringValue = @"Failed to install dylib.";
+        NSLog(@"OneClickYes: failed to install dylib");
         return;
     }
 
@@ -350,7 +349,6 @@ static NSBox *card(NSRect f) {
 
     run(@"/bin/launchctl", @[@"setenv", @"DYLD_INSERT_LIBRARIES", dylibPath()], nil);
     kickstartAgent();
-    self.message.stringValue = @"Installed. Hooks load when each dialog process spawns.";
     [self refresh];
 }
 
@@ -362,7 +360,6 @@ static NSBox *card(NSRect f) {
     run(@"/bin/launchctl", @[@"unsetenv", @"DYLD_INSERT_LIBRARIES"], nil);
     kickstartAgent();  // respawn agent without the dylib
     [[NSFileManager defaultManager] removeItemAtPath:supportDir() error:nil];
-    self.message.stringValue = @"Uninstalled. Nothing was left running or modified.";
     [self refresh];
 }
 
@@ -398,9 +395,6 @@ static NSBox *card(NSRect f) {
     } else {
         run(@"/usr/bin/pkill", @[@"-f", @"universalAccessAuthWarn"], nil);
     }
-    self.message.stringValue = cb.state == NSControlStateValueOn
-        ? @"Hook enabled; applies when the dialog process next spawns."
-        : @"Hook disabled; applies when the dialog process next spawns.";
     [self refresh];
 }
 
@@ -418,7 +412,7 @@ static NSBox *card(NSRect f) {
     NSString *dst = [supportDir() stringByAppendingPathComponent:name];
     [fm removeItemAtPath:dst error:nil];
     if (![fm copyItemAtPath:src toPath:dst error:nil]) {
-        self.message.stringValue = @"Test app missing from bundle.";
+        NSLog(@"OneClickYes: test app missing from bundle");
         return nil;
     }
     return dst;
@@ -441,7 +435,6 @@ static NSBox *card(NSRect f) {
            (unsigned long long)time(NULL), [[NSUUID UUID] UUIDString]],
           dst], nil);
     [[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:dst]];
-    self.message.stringValue = @"Test app launched; look for the modified Gatekeeper dialog.";
 }
 
 - (void)testPermission:(id)sender {
@@ -464,7 +457,6 @@ static NSBox *card(NSRect f) {
     [info writeToFile:plist atomically:YES];
     run(@"/usr/bin/codesign", @[@"-f", @"-s", @"-", dst], nil);
     [[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:dst]];
-    self.message.stringValue = @"Probe launched; look for the permission dialog with Allow.";
 }
 
 - (void)applicationDidFinishLaunching:(NSNotification *)n {
@@ -505,14 +497,14 @@ static NSBox *card(NSRect f) {
     [v addSubview:self.seg];
 
     // ---- Gatekeeper pane ----
-    self.gkPane = card(NSMakeRect(20, 70, 500, 132));
+    self.gkPane = card(NSMakeRect(20, 48, 500, 154));
     self.gkStatus = label(@"");
-    self.gkStatus.frame = NSMakeRect(14, 96, 472, 26);
+    self.gkStatus.frame = NSMakeRect(14, 118, 472, 26);
     [self.gkPane addSubview:self.gkStatus];
 
     self.enableGk = [NSButton checkboxWithTitle:@"Enable “Open Anyway” button"
                                          target:self action:@selector(toggleEnable:)];
-    self.enableGk.frame = NSMakeRect(14, 66, 472, 22);
+    self.enableGk.frame = NSMakeRect(14, 88, 472, 22);
     self.enableGk.state = ![[NSFileManager defaultManager]
         fileExistsAtPath:flagPath(@"disabled.gk")];
     [self.gkPane addSubview:self.enableGk];
@@ -520,14 +512,14 @@ static NSBox *card(NSRect f) {
     self.primaryCb = [NSButton checkboxWithTitle:
         @"Make “Open Anyway” the default button (accent color, Return key)"
                                           target:self action:@selector(togglePrimary:)];
-    self.primaryCb.frame = NSMakeRect(14, 42, 472, 22);
+    self.primaryCb.frame = NSMakeRect(14, 62, 472, 22);
     self.primaryCb.state = [[NSFileManager defaultManager]
         fileExistsAtPath:primaryFlagPath()] ? NSControlStateValueOn : NSControlStateValueOff;
     [self.gkPane addSubview:self.primaryCb];
 
     NSButton *testGK = [NSButton buttonWithTitle:@"Test Gatekeeper"
                                         target:self action:@selector(testDialog:)];
-    testGK.frame = NSMakeRect(14, 8, 130, 28);
+    testGK.frame = NSMakeRect(14, 28, 130, 28);
     testGK.bezelStyle = NSBezelStyleRounded;
     testGK.image = [NSImage imageWithSystemSymbolName:@"play.circle"
                                accessibilityDescription:nil];
@@ -536,26 +528,26 @@ static NSBox *card(NSRect f) {
 
     self.gkResult = label(@"");
     self.gkResult.font = [NSFont systemFontOfSize:11];
-    self.gkResult.frame = NSMakeRect(152, 12, 334, 20);
+    self.gkResult.frame = NSMakeRect(14, 4, 472, 18);
     [self.gkPane addSubview:self.gkResult];
     [v addSubview:self.gkPane];
 
     // ---- Permissions pane ----
-    self.tccPane = card(NSMakeRect(20, 70, 500, 132));
+    self.tccPane = card(NSMakeRect(20, 48, 500, 154));
     self.tccStatus = label(@"");
-    self.tccStatus.frame = NSMakeRect(14, 96, 472, 26);
+    self.tccStatus.frame = NSMakeRect(14, 118, 472, 26);
     [self.tccPane addSubview:self.tccStatus];
 
     self.enableTcc = [NSButton checkboxWithTitle:@"Enable “Allow” button"
                                           target:self action:@selector(toggleEnable:)];
-    self.enableTcc.frame = NSMakeRect(14, 60, 472, 22);
+    self.enableTcc.frame = NSMakeRect(14, 76, 472, 22);
     self.enableTcc.state = ![[NSFileManager defaultManager]
         fileExistsAtPath:flagPath(@"disabled.tcc")];
     [self.tccPane addSubview:self.enableTcc];
 
     NSButton *testTCC = [NSButton buttonWithTitle:@"Test Permission"
                                          target:self action:@selector(testPermission:)];
-    testTCC.frame = NSMakeRect(14, 20, 130, 28);
+    testTCC.frame = NSMakeRect(14, 28, 130, 28);
     testTCC.bezelStyle = NSBezelStyleRounded;
     testTCC.image = [NSImage imageWithSystemSymbolName:@"play.circle"
                                 accessibilityDescription:nil];
@@ -564,18 +556,12 @@ static NSBox *card(NSRect f) {
 
     self.tccResult = label(@"");
     self.tccResult.font = [NSFont systemFontOfSize:11];
-    self.tccResult.frame = NSMakeRect(152, 24, 334, 20);
+    self.tccResult.frame = NSMakeRect(14, 4, 472, 18);
     [self.tccPane addSubview:self.tccResult];
     self.tccPane.hidden = YES;
     [v addSubview:self.tccPane];
 
     // ---- bottom bar ----
-    self.message = label(@"");
-    self.message.font = [NSFont systemFontOfSize:11];
-    self.message.textColor = [NSColor secondaryLabelColor];
-    self.message.frame = NSMakeRect(20, 44, 500, 18);
-    [v addSubview:self.message];
-
     self.installBtn = [NSButton buttonWithTitle:@"Install & Enable"
                                        target:self action:@selector(install:)];
     self.installBtn.frame = NSMakeRect(20, 12, 140, 32);
