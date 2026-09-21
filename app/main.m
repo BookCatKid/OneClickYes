@@ -165,6 +165,51 @@ static void migrateLegacyInstall(void) {
 
 @implementation GKDelegate
 
+// One status row: tinted SF Symbol + text. attrs may override font/color
+// for the text part (e.g. smaller secondary "Last:" lines).
+static NSAttributedString *statusLine(NSString *icon, NSColor *color,
+                                      NSString *text, NSDictionary *attrs) {
+    NSImage *img = [NSImage imageWithSystemSymbolName:icon
+                               accessibilityDescription:nil];
+    img = [img imageWithSymbolConfiguration:
+        [NSImageSymbolConfiguration configurationWithHierarchicalColor:color]];
+    NSTextAttachment *a = [NSTextAttachment new];
+    a.image = img;
+    NSMutableAttributedString *s =
+        [[NSAttributedString attributedStringWithAttachment:a] mutableCopy];
+    [s appendAttributedString:[[NSAttributedString alloc]
+        initWithString:[NSString stringWithFormat:@"  %@", text]
+            attributes:attrs]];
+    return s;
+}
+
+static NSMutableAttributedString *joinLines(NSArray<NSAttributedString *> *ls) {
+    NSMutableAttributedString *out = [NSMutableAttributedString new];
+    NSMutableParagraphStyle *p = [NSMutableParagraphStyle new];
+    p.lineSpacing = 6;
+    for (NSAttributedString *l in ls) {
+        [out appendAttributedString:l];
+        [out appendAttributedString:[[NSAttributedString alloc] initWithString:@"\n"]];
+    }
+    [out addAttribute:NSParagraphStyleAttributeName value:p
+                range:NSMakeRange(0, out.length)];
+    return out;
+}
+
+static NSDictionary *subTextAttrs(void) {
+    return @{NSForegroundColorAttributeName: [NSColor secondaryLabelColor],
+             NSFontAttributeName: [NSFont systemFontOfSize:11]};
+}
+
+static NSBox *card(NSRect f) {
+    NSBox *b = [[NSBox alloc] initWithFrame:f];
+    b.boxType = NSBoxCustom;
+    b.cornerRadius = 10;
+    b.borderWidth = 0;
+    b.fillColor = [NSColor colorWithWhite:0.5 alpha:0.12];
+    return b;
+}
+
 static NSArray<NSString *> *logLines(void) {
     NSString *s = [NSString stringWithContentsOfFile:logPath()
                     encoding:NSUTF8StringEncoding error:nil];
@@ -183,12 +228,24 @@ static NSUInteger countMatching(NSArray<NSString *> *lines, NSString *needle) {
     BOOL env = envActive();
     BOOL plistInstalled = [[NSFileManager defaultManager] fileExistsAtPath:agentPlistPath()];
 
-    NSMutableString *s = [NSMutableString string];
-    [s appendFormat:@"SIP: %@\n", sip ? @"disabled (required)" : @"ENABLED — injection cannot work"];
-    [s appendFormat:@"LaunchAgent (auto-apply at login): %@\n",
-     plistInstalled ? @"installed" : @"not installed"];
-    [s appendFormat:@"Injection environment: %@", env ? @"set" : @"not set"];
-    self.globalStatus.stringValue = s;
+    NSColor *green = [NSColor systemGreenColor];
+    NSColor *red = [NSColor systemRedColor];
+    NSColor *yellow = [NSColor systemOrangeColor];
+    NSColor *gray = [NSColor secondaryLabelColor];
+
+    self.globalStatus.attributedStringValue = joinLines(@[
+        statusLine(sip ? @"checkmark.shield.fill" : @"xmark.octagon.fill",
+                   sip ? green : red,
+                   sip ? @"SIP disabled (required)" : @"SIP ENABLED — injection cannot work", nil),
+        statusLine(plistInstalled ? @"checkmark.circle.fill" : @"minus.circle",
+                   plistInstalled ? green : gray,
+                   [NSString stringWithFormat:@"LaunchAgent (auto-apply at login): %@",
+                    plistInstalled ? @"installed" : @"not installed"], nil),
+        statusLine(env ? @"checkmark.circle.fill" : @"exclamationmark.triangle.fill",
+                   env ? green : yellow,
+                   [NSString stringWithFormat:@"Injection environment: %@",
+                    env ? @"set" : @"not set"], nil),
+    ]);
 
     NSArray<NSString *> *lines = logLines();
 
@@ -198,14 +255,21 @@ static NSUInteger countMatching(NSArray<NSString *> *lines, NSString *needle) {
     NSString *gkLast = nil;
     for (NSString *l in lines.reverseObjectEnumerator)
         if ([l containsString:@"alert="] || [l containsString:@"Open Anyway"]) { gkLast = l; break; }
-    NSMutableString *gk = [NSMutableString string];
-    [gk appendFormat:@"CoreServicesUIAgent: %@\n",
-     procLoaded(agent) ? @"running — hook active" :
-     (agent ? @"running — hook NOT loaded yet" : @"loads on next Gatekeeper dialog")];
-    [gk appendFormat:@"“Open Anyway” added to %lu dialog%@\n",
-     (unsigned long)added, added == 1 ? @"" : @"s"];
-    if (gkLast) [gk appendFormat:@"Last: %@", gkLast];
-    self.gkStatus.stringValue = gk;
+    NSMutableArray *gk = [NSMutableArray array];
+    BOOL gkLoaded = procLoaded(agent);
+    [gk addObject:statusLine(gkLoaded ? @"checkmark.circle.fill" :
+                             (agent ? @"exclamationmark.circle.fill" : @"clock"),
+                             gkLoaded ? green : (agent ? yellow : gray),
+        [NSString stringWithFormat:@"CoreServicesUIAgent: %@",
+         gkLoaded ? @"running — hook active" :
+         (agent ? @"running — hook NOT loaded yet" : @"loads on next Gatekeeper dialog")], nil)];
+    [gk addObject:statusLine(@"chart.bar.fill", gray,
+        [NSString stringWithFormat:@"“Open Anyway” added to %lu dialog%@",
+         (unsigned long)added, added == 1 ? @"" : @"s"], nil)];
+    if (gkLast)
+        [gk addObject:statusLine(@"clock", gray,
+            [NSString stringWithFormat:@"Last: %@", gkLast], subTextAttrs())];
+    self.gkStatus.attributedStringValue = joinLines(gk);
 
     // --- Permissions pane stats ---
     pid_t warn = procPID(kWarnSvc);
@@ -214,14 +278,20 @@ static NSUInteger countMatching(NSArray<NSString *> *lines, NSString *needle) {
     NSString *tccLast = nil;
     for (NSString *l in lines.reverseObjectEnumerator)
         if ([l containsString:@"allow:"] || [l containsString:@"Allow button"]) { tccLast = l; break; }
-    NSMutableString *tc = [NSMutableString string];
-    [tc appendFormat:@"universalAccessAuthWarn: %@\n",
-     procLoaded(warn) ? @"running — hook active" : @"loads on next permission dialog"];
-    [tc appendFormat:@"“Allow” added to %lu dialog%@ — %lu grant%@ verified\n",
-     (unsigned long)tccAdded, tccAdded == 1 ? @"" : @"s",
-     (unsigned long)granted, granted == 1 ? @"" : @"s"];
-    if (tccLast) [tc appendFormat:@"Last: %@", tccLast];
-    self.tccStatus.stringValue = tc;
+    NSMutableArray *tc = [NSMutableArray array];
+    BOOL tccLoaded = procLoaded(warn);
+    [tc addObject:statusLine(tccLoaded ? @"checkmark.circle.fill" : @"clock",
+                             tccLoaded ? green : gray,
+        [NSString stringWithFormat:@"universalAccessAuthWarn: %@",
+         tccLoaded ? @"running — hook active" : @"loads on next permission dialog"], nil)];
+    [tc addObject:statusLine(@"chart.bar.fill", gray,
+        [NSString stringWithFormat:@"“Allow” added to %lu dialog%@ — %lu grant%@ verified",
+         (unsigned long)tccAdded, tccAdded == 1 ? @"" : @"s",
+         (unsigned long)granted, granted == 1 ? @"" : @"s"], nil)];
+    if (tccLast)
+        [tc addObject:statusLine(@"clock", gray,
+            [NSString stringWithFormat:@"Last: %@", tccLast], subTextAttrs())];
+    self.tccStatus.attributedStringValue = joinLines(tc);
 
     // A test app proves success by writing its marker file from its own code.
     [self pollPending:&_gkPending marker:self.gkMarker start:self.gkStart
@@ -375,7 +445,7 @@ static NSUInteger countMatching(NSArray<NSString *> *lines, NSString *needle) {
 - (void)applicationDidFinishLaunching:(NSNotification *)n {
     migrateLegacyInstall();
     NSWindow *w = [[NSWindow alloc]
-        initWithContentRect:NSMakeRect(0, 0, 540, 520)
+        initWithContentRect:NSMakeRect(0, 0, 540, 540)
                   styleMask:NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|
                             NSWindowStyleMaskMiniaturizable
                     backing:NSBackingStoreBuffered defer:NO];
@@ -384,7 +454,7 @@ static NSUInteger countMatching(NSArray<NSString *> *lines, NSString *needle) {
 
     NSTextField *title = [NSTextField labelWithString:@"One-click approvals for macOS prompts"];
     title.font = [NSFont boldSystemFontOfSize:16];
-    title.frame = NSMakeRect(20, 476, 500, 24);
+    title.frame = NSMakeRect(20, 496, 500, 24);
     [v addSubview:title];
 
     NSTextField *info = [NSTextField wrappingLabelWithString:
@@ -392,52 +462,59 @@ static NSUInteger countMatching(NSArray<NSString *> *lines, NSString *needle) {
         @"click. Nothing stays running: the dylib is injected by launchd when "
         @"each dialog process spawns, and ignores every other process on the "
         @"system."];
-    info.frame = NSMakeRect(20, 404, 500, 64);
+    info.font = [NSFont systemFontOfSize:12];
+    info.textColor = [NSColor secondaryLabelColor];
+    info.frame = NSMakeRect(20, 440, 500, 52);
     [v addSubview:info];
 
+    NSBox *globalCard = card(NSMakeRect(20, 330, 500, 100));
     self.globalStatus = [NSTextField wrappingLabelWithString:@""];
-    self.globalStatus.frame = NSMakeRect(20, 340, 500, 58);
-    [v addSubview:self.globalStatus];
+    self.globalStatus.frame = NSMakeRect(14, 14, 472, 74);
+    [globalCard addSubview:self.globalStatus];
+    [v addSubview:globalCard];
 
     self.seg = [NSSegmentedControl segmentedControlWithLabels:
         @[@"Gatekeeper “Open Anyway”", @"Permission “Allow”"]
                                                 trackingMode:NSSegmentSwitchTrackingSelectOne
                                                       target:self
                                                       action:@selector(modeChanged:)];
-    self.seg.frame = NSMakeRect(20, 300, 340, 26);
+    self.seg.frame = NSMakeRect(20, 294, 340, 26);
     self.seg.selectedSegment = 0;
     [v addSubview:self.seg];
 
     // ---- Gatekeeper pane ----
-    self.gkPane = [[NSView alloc] initWithFrame:NSMakeRect(20, 120, 500, 170)];
+    self.gkPane = card(NSMakeRect(20, 104, 500, 178));
     self.gkStatus = [NSTextField wrappingLabelWithString:@""];
-    self.gkStatus.frame = NSMakeRect(0, 76, 500, 90);
+    self.gkStatus.frame = NSMakeRect(14, 72, 472, 96);
     [self.gkPane addSubview:self.gkStatus];
 
     self.primaryCb = [NSButton checkboxWithTitle:
         @"Make “Open Anyway” the default button (accent color, Return key)"
                                           target:self action:@selector(togglePrimary:)];
-    self.primaryCb.frame = NSMakeRect(0, 46, 500, 22);
+    self.primaryCb.frame = NSMakeRect(14, 40, 472, 22);
     self.primaryCb.state = [[NSFileManager defaultManager]
         fileExistsAtPath:primaryFlagPath()] ? NSControlStateValueOn : NSControlStateValueOff;
     [self.gkPane addSubview:self.primaryCb];
 
     NSButton *testGK = [NSButton buttonWithTitle:@"Test Gatekeeper"
                                         target:self action:@selector(testDialog:)];
-    testGK.frame = NSMakeRect(0, 6, 130, 28);
+    testGK.frame = NSMakeRect(14, 6, 130, 28);
     testGK.bezelStyle = NSBezelStyleRounded;
+    testGK.image = [NSImage imageWithSystemSymbolName:@"play.circle"
+                               accessibilityDescription:nil];
+    testGK.imagePosition = NSImageLeft;
     [self.gkPane addSubview:testGK];
 
     self.gkResult = [NSTextField wrappingLabelWithString:@""];
     self.gkResult.font = [NSFont systemFontOfSize:11];
-    self.gkResult.frame = NSMakeRect(140, 10, 360, 20);
+    self.gkResult.frame = NSMakeRect(152, 10, 334, 20);
     [self.gkPane addSubview:self.gkResult];
     [v addSubview:self.gkPane];
 
     // ---- Permissions pane ----
-    self.tccPane = [[NSView alloc] initWithFrame:NSMakeRect(20, 120, 500, 170)];
+    self.tccPane = card(NSMakeRect(20, 104, 500, 178));
     self.tccStatus = [NSTextField wrappingLabelWithString:@""];
-    self.tccStatus.frame = NSMakeRect(0, 76, 500, 90);
+    self.tccStatus.frame = NSMakeRect(14, 72, 472, 96);
     [self.tccPane addSubview:self.tccStatus];
 
     NSTextField *tccNote = [NSTextField wrappingLabelWithString:
@@ -446,18 +523,21 @@ static NSUInteger countMatching(NSArray<NSString *> *lines, NSString *needle) {
         @"Allow button are left alone."];
     tccNote.font = [NSFont systemFontOfSize:11];
     tccNote.textColor = [NSColor secondaryLabelColor];
-    tccNote.frame = NSMakeRect(0, 36, 500, 34);
+    tccNote.frame = NSMakeRect(14, 32, 472, 34);
     [self.tccPane addSubview:tccNote];
 
     NSButton *testTCC = [NSButton buttonWithTitle:@"Test Permission"
                                          target:self action:@selector(testPermission:)];
-    testTCC.frame = NSMakeRect(0, 6, 130, 28);
+    testTCC.frame = NSMakeRect(14, 6, 130, 28);
     testTCC.bezelStyle = NSBezelStyleRounded;
+    testTCC.image = [NSImage imageWithSystemSymbolName:@"play.circle"
+                                accessibilityDescription:nil];
+    testTCC.imagePosition = NSImageLeft;
     [self.tccPane addSubview:testTCC];
 
     self.tccResult = [NSTextField wrappingLabelWithString:@""];
     self.tccResult.font = [NSFont systemFontOfSize:11];
-    self.tccResult.frame = NSMakeRect(140, 10, 360, 20);
+    self.tccResult.frame = NSMakeRect(152, 10, 334, 20);
     [self.tccPane addSubview:self.tccResult];
     self.tccPane.hidden = YES;
     [v addSubview:self.tccPane];
@@ -466,19 +546,25 @@ static NSUInteger countMatching(NSArray<NSString *> *lines, NSString *needle) {
     self.message = [NSTextField wrappingLabelWithString:@""];
     self.message.font = [NSFont systemFontOfSize:11];
     self.message.textColor = [NSColor secondaryLabelColor];
-    self.message.frame = NSMakeRect(20, 76, 500, 30);
+    self.message.frame = NSMakeRect(20, 66, 500, 28);
     [v addSubview:self.message];
 
     self.installBtn = [NSButton buttonWithTitle:@"Install & Enable"
                                        target:self action:@selector(install:)];
-    self.installBtn.frame = NSMakeRect(20, 28, 140, 32);
+    self.installBtn.frame = NSMakeRect(20, 22, 140, 32);
     self.installBtn.bezelStyle = NSBezelStyleRounded;
+    self.installBtn.image = [NSImage imageWithSystemSymbolName:@"arrow.down.to.line"
+                                        accessibilityDescription:nil];
+    self.installBtn.imagePosition = NSImageLeft;
     [v addSubview:self.installBtn];
 
     self.uninstallBtn = [NSButton buttonWithTitle:@"Uninstall"
                                          target:self action:@selector(uninstall:)];
-    self.uninstallBtn.frame = NSMakeRect(170, 28, 110, 32);
+    self.uninstallBtn.frame = NSMakeRect(170, 22, 110, 32);
     self.uninstallBtn.bezelStyle = NSBezelStyleRounded;
+    self.uninstallBtn.image = [NSImage imageWithSystemSymbolName:@"trash"
+                                          accessibilityDescription:nil];
+    self.uninstallBtn.imagePosition = NSImageLeft;
     [v addSubview:self.uninstallBtn];
 
     [w center];
