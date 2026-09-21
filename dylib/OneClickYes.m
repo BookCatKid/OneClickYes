@@ -22,6 +22,18 @@ static void gklog(NSString *fmt, ...) {
     NSLog(@"OneClickYes: %@", s);
 }
 
+// Per-hook kill switches: a flag file in the support dir disables that
+// hook. Checked once at load — takes effect when the dialog process
+// next spawns (both agents are per-request/one-shot).
+static BOOL ocy_disabled(const char *flag) {
+    const char *home = getenv("HOME");
+    if (!home) return NO;
+    char p[PATH_MAX];
+    snprintf(p, sizeof p,
+             "%s/Library/Application Support/OneClickYes/%s", home, flag);
+    return access(p, F_OK) == 0;
+}
+
 static id (*orig_alertForURL)(id, SEL, id, id) = NULL;
 
 // -[GKQuarantineResolver alertForURL:malwareInfo:] -> NSAlert*
@@ -191,6 +203,9 @@ __attribute__((constructor)) static void gkinit(void) {
     char path[PATH_MAX]; uint32_t sz = sizeof(path);
     if (_NSGetExecutablePath(path, &sz) != 0) return;
     if (strstr(path, "CoreServicesUIAgent") != NULL) {
+        if (ocy_disabled("disabled.gk")) {
+            gklog(@"hook disabled by flag in %s", path); return;
+        }
         Class cls = objc_getClass("GKQuarantineResolver");
         if (!cls) { gklog(@"GKQuarantineResolver class not found"); return; }
         SEL sel = @selector(alertForURL:malwareInfo:);
@@ -202,6 +217,9 @@ __attribute__((constructor)) static void gkinit(void) {
         return;
     }
     if (strstr(path, "universalAccessAuthWarn") != NULL) {
+        if (ocy_disabled("disabled.tcc")) {
+            gklog(@"TCC hook disabled by flag in %s", path); return;
+        }
         Class cls = objc_getClass("AXASecurityWarningWindowController");
         if (!cls) { gklog(@"AXASecurityWarningWindowController not found"); return; }
         SEL sel = @selector(awakeFromNib);

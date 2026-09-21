@@ -38,6 +38,9 @@ static NSString *logPath(void) { return @"/tmp/oneclickyes.log"; }
 static NSString *primaryFlagPath(void) {
     return [supportDir() stringByAppendingPathComponent:@"primary"];
 }
+static NSString *flagPath(NSString *name) {
+    return [supportDir() stringByAppendingPathComponent:name];
+}
 
 static NSString *run(NSString *launch, NSArray<NSString *> *args, int *status) {
     NSTask *t = [NSTask new];
@@ -158,6 +161,7 @@ static void migrateLegacyInstall(void) {
 @property (nonatomic) NSTextField *gkStatus, *tccStatus;
 @property (nonatomic) NSTextField *gkResult, *tccResult;
 @property (nonatomic) NSButton *installBtn, *uninstallBtn, *primaryCb;
+@property (nonatomic) NSButton *enableGk, *enableTcc;
 @property (nonatomic) BOOL gkPending, tccPending;
 @property (nonatomic) NSDate *gkStart, *tccStart;
 @property (nonatomic) NSString *gkMarker, *tccMarker;
@@ -288,9 +292,14 @@ static NSUInteger countMatching(NSArray<NSString *> *lines, NSString *needle) {
         if ([l containsString:@"alert="] || [l containsString:@"Open Anyway"]) { gkLast = l; break; }
     NSMutableArray *gk = [NSMutableArray array];
     BOOL gkLoaded = procLoaded(agent);
-    [gk addObject:statusLine(gkLoaded ? @"checkmark.circle.fill" :
-                             (agent ? @"exclamationmark.circle.fill" : @"clock"),
-                             gkLoaded ? green : (agent ? yellow : gray),
+    BOOL gkOff = [[NSFileManager defaultManager]
+        fileExistsAtPath:flagPath(@"disabled.gk")];
+    [gk addObject:statusLine(
+        gkOff ? @"minus.circle" :
+            (gkLoaded ? @"checkmark.circle.fill" :
+             (agent ? @"exclamationmark.circle.fill" : @"clock")),
+        gkOff ? gray : (gkLoaded ? green : (agent ? yellow : gray)),
+        gkOff ? @"CoreServicesUIAgent: hook disabled" :
         [NSString stringWithFormat:@"CoreServicesUIAgent: %@",
          gkLoaded ? @"running — hook active" :
          (agent ? @"running — hook NOT loaded yet" : @"loads on next Gatekeeper dialog")], nil)];
@@ -301,7 +310,7 @@ static NSUInteger countMatching(NSArray<NSString *> *lines, NSString *needle) {
         [gk addObject:statusLine(@"clock", gray,
             [NSString stringWithFormat:@"Last: %@", oneLine(gkLast)], subTextAttrs())];
     self.gkStatus.attributedStringValue = joinLines(gk);
-    centerLabel(self.gkStatus, 14, 472, 74, 86);
+    centerLabel(self.gkStatus, 14, 472, 106, 66);
 
     // --- Permissions pane stats ---
     pid_t warn = procPID(kWarnSvc);
@@ -312,8 +321,12 @@ static NSUInteger countMatching(NSArray<NSString *> *lines, NSString *needle) {
         if ([l containsString:@"allow:"] || [l containsString:@"Allow button"]) { tccLast = l; break; }
     NSMutableArray *tc = [NSMutableArray array];
     BOOL tccLoaded = procLoaded(warn);
-    [tc addObject:statusLine(tccLoaded ? @"checkmark.circle.fill" : @"clock",
-                             tccLoaded ? green : gray,
+    BOOL tccOff = [[NSFileManager defaultManager]
+        fileExistsAtPath:flagPath(@"disabled.tcc")];
+    [tc addObject:statusLine(
+        tccOff ? @"minus.circle" : (tccLoaded ? @"checkmark.circle.fill" : @"clock"),
+        tccOff ? gray : (tccLoaded ? green : gray),
+        tccOff ? @"universalAccessAuthWarn: hook disabled" :
         [NSString stringWithFormat:@"universalAccessAuthWarn: %@",
          tccLoaded ? @"running — hook active" : @"loads on next permission dialog"], nil)];
     [tc addObject:statusLine(@"chart.bar.fill", gray,
@@ -324,7 +337,7 @@ static NSUInteger countMatching(NSArray<NSString *> *lines, NSString *needle) {
         [tc addObject:statusLine(@"clock", gray,
             [NSString stringWithFormat:@"Last: %@", oneLine(tccLast)], subTextAttrs())];
     self.tccStatus.attributedStringValue = joinLines(tc);
-    centerLabel(self.tccStatus, 14, 472, 74, 86);
+    centerLabel(self.tccStatus, 14, 472, 112, 60);
 
     // A test app proves success by writing its marker file from its own code.
     [self pollPending:&_gkPending marker:self.gkMarker start:self.gkStart
@@ -410,6 +423,26 @@ static NSUInteger countMatching(NSArray<NSString *> *lines, NSString *needle) {
     } else {
         [[NSFileManager defaultManager] removeItemAtPath:primaryFlagPath() error:nil];
     }
+}
+
+// Per-mode enable: presence of disabled.<mode> makes the dylib skip that
+// hook. Applies when the dialog process next spawns.
+- (void)toggleEnable:(NSButton *)cb {
+    NSString *f = flagPath(cb == self.enableGk ? @"disabled.gk" : @"disabled.tcc");
+    NSFileManager *fm = [NSFileManager defaultManager];
+    if (cb.state == NSControlStateValueOn) {
+        [fm removeItemAtPath:f error:nil];
+    } else {
+        [fm createDirectoryAtPath:supportDir()
+            withIntermediateDirectories:YES attributes:nil error:nil];
+        [@"" writeToFile:f atomically:YES
+             encoding:NSUTF8StringEncoding error:nil];
+    }
+    kickstartAgent();   // respawn the uiagent so the flag takes effect now
+    self.message.stringValue = cb.state == NSControlStateValueOn
+        ? @"Hook enabled — applies when the dialog process next spawns."
+        : @"Hook disabled — applies when the dialog process next spawns.";
+    [self refresh];
 }
 
 // Copy a bundled test app to a fresh random name in the support dir so each
@@ -516,22 +549,29 @@ static NSUInteger countMatching(NSArray<NSString *> *lines, NSString *needle) {
     [v addSubview:self.seg];
 
     // ---- Gatekeeper pane ----
-    self.gkPane = card(NSMakeRect(20, 72, 500, 176));
+    self.gkPane = card(NSMakeRect(20, 70, 500, 186));
     self.gkStatus = label(@"");
-    self.gkStatus.frame = NSMakeRect(14, 82, 472, 80);
+    self.gkStatus.frame = NSMakeRect(14, 108, 472, 64);
     [self.gkPane addSubview:self.gkStatus];
+
+    self.enableGk = [NSButton checkboxWithTitle:@"Enable “Open Anyway” button"
+                                         target:self action:@selector(toggleEnable:)];
+    self.enableGk.frame = NSMakeRect(14, 78, 472, 22);
+    self.enableGk.state = ![[NSFileManager defaultManager]
+        fileExistsAtPath:flagPath(@"disabled.gk")];
+    [self.gkPane addSubview:self.enableGk];
 
     self.primaryCb = [NSButton checkboxWithTitle:
         @"Make “Open Anyway” the default button (accent color, Return key)"
                                           target:self action:@selector(togglePrimary:)];
-    self.primaryCb.frame = NSMakeRect(14, 48, 472, 22);
+    self.primaryCb.frame = NSMakeRect(14, 54, 472, 22);
     self.primaryCb.state = [[NSFileManager defaultManager]
         fileExistsAtPath:primaryFlagPath()] ? NSControlStateValueOn : NSControlStateValueOff;
     [self.gkPane addSubview:self.primaryCb];
 
     NSButton *testGK = [NSButton buttonWithTitle:@"Test Gatekeeper"
                                         target:self action:@selector(testDialog:)];
-    testGK.frame = NSMakeRect(14, 12, 130, 28);
+    testGK.frame = NSMakeRect(14, 16, 130, 28);
     testGK.bezelStyle = NSBezelStyleRounded;
     testGK.image = [NSImage imageWithSystemSymbolName:@"play.circle"
                                accessibilityDescription:nil];
@@ -540,14 +580,14 @@ static NSUInteger countMatching(NSArray<NSString *> *lines, NSString *needle) {
 
     self.gkResult = label(@"");
     self.gkResult.font = [NSFont systemFontOfSize:11];
-    self.gkResult.frame = NSMakeRect(152, 16, 334, 20);
+    self.gkResult.frame = NSMakeRect(152, 20, 334, 20);
     [self.gkPane addSubview:self.gkResult];
     [v addSubview:self.gkPane];
 
     // ---- Permissions pane ----
-    self.tccPane = card(NSMakeRect(20, 72, 500, 176));
+    self.tccPane = card(NSMakeRect(20, 70, 500, 186));
     self.tccStatus = label(@"");
-    self.tccStatus.frame = NSMakeRect(14, 82, 472, 80);
+    self.tccStatus.frame = NSMakeRect(14, 112, 472, 60);
     [self.tccPane addSubview:self.tccStatus];
 
     NSTextField *tccNote = label(
@@ -556,12 +596,19 @@ static NSUInteger countMatching(NSArray<NSString *> *lines, NSString *needle) {
         @"Allow button are left alone.");
     tccNote.font = [NSFont systemFontOfSize:11];
     tccNote.textColor = [NSColor secondaryLabelColor];
-    tccNote.frame = NSMakeRect(14, 46, 472, 30);
+    tccNote.frame = NSMakeRect(14, 82, 472, 30);
     [self.tccPane addSubview:tccNote];
+
+    self.enableTcc = [NSButton checkboxWithTitle:@"Enable “Allow” button"
+                                          target:self action:@selector(toggleEnable:)];
+    self.enableTcc.frame = NSMakeRect(14, 56, 472, 22);
+    self.enableTcc.state = ![[NSFileManager defaultManager]
+        fileExistsAtPath:flagPath(@"disabled.tcc")];
+    [self.tccPane addSubview:self.enableTcc];
 
     NSButton *testTCC = [NSButton buttonWithTitle:@"Test Permission"
                                          target:self action:@selector(testPermission:)];
-    testTCC.frame = NSMakeRect(14, 10, 130, 28);
+    testTCC.frame = NSMakeRect(14, 16, 130, 28);
     testTCC.bezelStyle = NSBezelStyleRounded;
     testTCC.image = [NSImage imageWithSystemSymbolName:@"play.circle"
                                 accessibilityDescription:nil];
@@ -570,7 +617,7 @@ static NSUInteger countMatching(NSArray<NSString *> *lines, NSString *needle) {
 
     self.tccResult = label(@"");
     self.tccResult.font = [NSFont systemFontOfSize:11];
-    self.tccResult.frame = NSMakeRect(152, 14, 334, 20);
+    self.tccResult.frame = NSMakeRect(152, 20, 334, 20);
     [self.tccPane addSubview:self.tccResult];
     self.tccPane.hidden = YES;
     [v addSubview:self.tccPane];
