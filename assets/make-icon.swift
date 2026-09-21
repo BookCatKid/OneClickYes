@@ -29,11 +29,8 @@ tilePath.fill()
 NSGraphicsContext.restoreGraphicsState()
 
 // Green gradient, lighter at top
-let grad = NSGradient(colors: [
-    NSColor(srgbRed: 0.22, green: 0.23, blue: 0.26, alpha: 1), // charcoal top
-    NSColor(srgbRed: 0.05, green: 0.05, blue: 0.07, alpha: 1), // near-black bottom
-])!
-grad.draw(in: tilePath, angle: -90)
+NSColor(srgbRed: 0.08, green: 0.08, blue: 0.09, alpha: 1).set()
+tilePath.fill()
 
 // Inner hairline highlight along the top edge
 NSGraphicsContext.saveGraphicsState()
