@@ -224,15 +224,15 @@ static NSTextField *label(NSString *s) {
     return t;
 }
 
-// Vertically center a label's text within a region — let AppKit size
-// the field to its content, then center the fitted frame so padding
-// error splits evenly above and below.
+// Vertically center a label's text within a region. The frame gets the
+// cell's fitted height (accurate now that joinLines drops the trailing
+// newline) minus the cell's internal bottom inset, so the top-aligned
+// text block itself lands centered — and stays a few pts taller than
+// the glyphs so nothing clips.
 static void centerLabel(NSTextField *t, CGFloat x, CGFloat w,
                         CGFloat y, CGFloat h) {
-    t.preferredMaxLayoutWidth = w;
-    [t sizeToFit];
-    NSRect f = t.frame;
-    t.frame = NSMakeRect(x, y + (h - f.size.height) / 2, w, f.size.height);
+    CGFloat fh = [t.cell cellSizeForBounds:NSMakeRect(0, 0, w, 200)].height;
+    t.frame = NSMakeRect(x, y + (h - fh) / 2 - 2, w, fh);
 }
 
 static NSBox *card(NSRect f) {
