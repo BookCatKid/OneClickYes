@@ -154,6 +154,8 @@ static void migrateLegacyInstall(void) {
 }
 
 @interface GKDelegate : NSObject <NSApplicationDelegate>
+@property (nonatomic) NSWindow *win;
+@property (nonatomic) BOOL installed;
 @property (nonatomic) NSTextField *globalStatus;
 @property (nonatomic) NSSegmentedControl *seg;
 @property (nonatomic) NSView *gkPane, *tccPane;
@@ -300,6 +302,17 @@ static NSBox *card(NSRect f) {
 
     self.installBtn.enabled = sip && !env;
     self.uninstallBtn.enabled = plistInstalled || env;
+
+    // Nothing installed: the mode section is meaningless, hide it and
+    // collapse the window to just status + Install/Uninstall.
+    BOOL installed = plistInstalled || env;
+    self.installed = installed;
+    self.seg.hidden = !installed;
+    self.gkPane.hidden = !installed || self.seg.selectedSegment != 0;
+    self.tccPane.hidden = !installed || self.seg.selectedSegment != 1;
+    CGFloat h = installed ? 410 : 216;
+    NSSize cs = self.win.contentView.frame.size;
+    if (cs.height != h) [self.win setContentSize:NSMakeSize(cs.width, h)];
 }
 
 - (void)pollPending:(BOOL *)pending marker:(NSString *)marker start:(NSDate *)start
@@ -318,49 +331,57 @@ static NSBox *card(NSRect f) {
 
 - (void)modeChanged:(NSSegmentedControl *)seg {
     BOOL gk = seg.selectedSegment == 0;
-    self.gkPane.hidden = !gk;
-    self.tccPane.hidden = gk;
+    self.gkPane.hidden = !gk || !self.installed;
+    self.tccPane.hidden = gk || !self.installed;
 }
 
+// install/uninstall spawn synchronous subprocesses — launchctl bootstrap
+// can block for tens of seconds under macOS 27's script-execution gate —
+// so they run on a background queue and marshal UI updates back to main.
 - (void)install:(id)sender {
-    NSFileManager *fm = [NSFileManager defaultManager];
-    [fm createDirectoryAtPath:supportDir() withIntermediateDirectories:YES
-                   attributes:nil error:nil];
-    NSString *src = [[[NSBundle mainBundle] resourcePath]
-        stringByAppendingPathComponent:@"OneClickYes.dylib"];
-    NSString *tmp = [supportDir()
-        stringByAppendingPathComponent:@".OneClickYes.dylib.tmp"];
-    [fm removeItemAtPath:tmp error:nil];
-    if (![fm copyItemAtPath:src toPath:tmp error:nil]) {
-        NSLog(@"OneClickYes: failed to copy dylib from app bundle");
-        return;
-    }
-    run(@"/usr/bin/codesign", @[@"-f", @"-s", @"-", tmp], nil);
-    if (rename(tmp.fileSystemRepresentation,
-               dylibPath().fileSystemRepresentation) != 0) {
-        NSLog(@"OneClickYes: failed to install dylib");
-        return;
-    }
-
-    writeAgentPlist();
-    run(@"/bin/launchctl",
-        @[@"bootstrap", [NSString stringWithFormat:@"gui/%@", uidStr()],
-          agentPlistPath()], nil);
-
-    run(@"/bin/launchctl", @[@"setenv", @"DYLD_INSERT_LIBRARIES", dylibPath()], nil);
-    kickstartAgent();
-    [self refresh];
+    self.installBtn.enabled = NO;
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        NSFileManager *fm = [NSFileManager defaultManager];
+        [fm createDirectoryAtPath:supportDir() withIntermediateDirectories:YES
+                       attributes:nil error:nil];
+        NSString *src = [[[NSBundle mainBundle] resourcePath]
+            stringByAppendingPathComponent:@"OneClickYes.dylib"];
+        NSString *tmp = [supportDir()
+            stringByAppendingPathComponent:@".OneClickYes.dylib.tmp"];
+        [fm removeItemAtPath:tmp error:nil];
+        BOOL ok = [fm copyItemAtPath:src toPath:tmp error:nil];
+        if (ok) {
+            run(@"/usr/bin/codesign", @[@"-f", @"-s", @"-", tmp], nil);
+            ok = rename(tmp.fileSystemRepresentation,
+                        dylibPath().fileSystemRepresentation) == 0;
+        }
+        if (ok) {
+            writeAgentPlist();
+            run(@"/bin/launchctl",
+                @[@"bootstrap", [NSString stringWithFormat:@"gui/%@", uidStr()],
+                  agentPlistPath()], nil);
+            run(@"/bin/launchctl", @[@"setenv", @"DYLD_INSERT_LIBRARIES",
+                                     dylibPath()], nil);
+            kickstartAgent();
+        } else {
+            NSLog(@"OneClickYes: install failed (dylib copy/rename)");
+        }
+        dispatch_async(dispatch_get_main_queue(), ^{ [self refresh]; });
+    });
 }
 
 - (void)uninstall:(id)sender {
-    run(@"/bin/launchctl",
-        @[@"bootout",
-          [NSString stringWithFormat:@"gui/%@/%@", uidStr(), kLabel]], nil);
-    [[NSFileManager defaultManager] removeItemAtPath:agentPlistPath() error:nil];
-    run(@"/bin/launchctl", @[@"unsetenv", @"DYLD_INSERT_LIBRARIES"], nil);
-    kickstartAgent();  // respawn agent without the dylib
-    [[NSFileManager defaultManager] removeItemAtPath:supportDir() error:nil];
-    [self refresh];
+    self.uninstallBtn.enabled = NO;
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        run(@"/bin/launchctl",
+            @[@"bootout",
+              [NSString stringWithFormat:@"gui/%@/%@", uidStr(), kLabel]], nil);
+        [[NSFileManager defaultManager] removeItemAtPath:agentPlistPath() error:nil];
+        run(@"/bin/launchctl", @[@"unsetenv", @"DYLD_INSERT_LIBRARIES"], nil);
+        kickstartAgent();  // respawn agent without the dylib
+        [[NSFileManager defaultManager] removeItemAtPath:supportDir() error:nil];
+        dispatch_async(dispatch_get_main_queue(), ^{ [self refresh]; });
+    });
 }
 
 - (void)togglePrimary:(NSButton *)cb {
@@ -475,11 +496,13 @@ static NSBox *card(NSRect f) {
                             NSWindowStyleMaskMiniaturizable
                     backing:NSBackingStoreBuffered defer:NO];
     w.title = @"OneClickYes";
+    self.win = w;
     NSView *v = w.contentView;
 
     NSTextField *title = [NSTextField labelWithString:@"One-click approvals for macOS prompts"];
     title.font = [NSFont boldSystemFontOfSize:16];
     title.frame = NSMakeRect(20, 372, 500, 24);
+    title.autoresizingMask = NSViewMinYMargin;
     [v addSubview:title];
 
     NSTextField *info = label(
@@ -487,9 +510,11 @@ static NSBox *card(NSRect f) {
     info.font = [NSFont systemFontOfSize:12];
     info.textColor = [NSColor secondaryLabelColor];
     info.frame = NSMakeRect(20, 342, 500, 18);
+    info.autoresizingMask = NSViewMinYMargin;
     [v addSubview:info];
 
     NSBox *globalCard = card(NSMakeRect(20, 244, 500, 88));
+    globalCard.autoresizingMask = NSViewMinYMargin;
     self.globalStatus = label(@"");
     self.globalStatus.frame = NSMakeRect(14, 10, 472, 68);
     [globalCard addSubview:self.globalStatus];
@@ -501,6 +526,7 @@ static NSBox *card(NSRect f) {
                                                       target:self
                                                       action:@selector(modeChanged:)];
     self.seg.frame = NSMakeRect(100, 210, 340, 26);
+    self.seg.autoresizingMask = NSViewMinYMargin;
     self.seg.selectedSegment = 0;
     [v addSubview:self.seg];
 
@@ -573,6 +599,7 @@ static NSBox *card(NSRect f) {
     self.installBtn = [NSButton buttonWithTitle:@"Install & Enable"
                                        target:self action:@selector(install:)];
     self.installBtn.frame = NSMakeRect(20, 12, 140, 32);
+    self.installBtn.autoresizingMask = NSViewMaxYMargin;
     self.installBtn.bezelStyle = NSBezelStyleRounded;
     self.installBtn.image = [NSImage imageWithSystemSymbolName:@"arrow.down.to.line"
                                         accessibilityDescription:nil];
@@ -582,15 +609,16 @@ static NSBox *card(NSRect f) {
     self.uninstallBtn = [NSButton buttonWithTitle:@"Uninstall"
                                          target:self action:@selector(uninstall:)];
     self.uninstallBtn.frame = NSMakeRect(170, 12, 110, 32);
+    self.uninstallBtn.autoresizingMask = NSViewMaxYMargin;
     self.uninstallBtn.bezelStyle = NSBezelStyleRounded;
     self.uninstallBtn.image = [NSImage imageWithSystemSymbolName:@"trash"
                                           accessibilityDescription:nil];
     self.uninstallBtn.imagePosition = NSImageLeft;
     [v addSubview:self.uninstallBtn];
 
+    [self refresh];
     [w center];
     [w makeKeyAndOrderFront:nil];
-    [self refresh];
     [NSTimer scheduledTimerWithTimeInterval:2.0 target:self
                                    selector:@selector(refresh) userInfo:nil repeats:YES];
     [NSApp activateIgnoringOtherApps:YES];
