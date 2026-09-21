@@ -475,3 +475,47 @@ set call returning success (cause undetermined — possibly a request-
 lifecycle race where the pending record is created between AUTHREQ and our
 set). The click handler now verifies the result via
 `TCCAccessCopyInformation` and retries once before dismissing.
+
+### Other permission dialogs on macOS 27 (verified map)
+
+Two distinct prompt families exist; only one lacks a native approve path.
+
+**UserNotificationCenter family — native `Don't Allow` / `Allow` already
+present (verified by triggering each with a signed probe app):**
+
+| Service | Owner | Buttons observed |
+|---|---|---|
+| Camera | UserNotificationCenter | Don't Allow / Allow |
+| Microphone | UserNotificationCenter | Don't Allow / Allow |
+| Contacts | UserNotificationCenter | Don't Allow / Allow |
+| Photos | UserNotificationCenter | Allow All Photos / Don't Allow |
+| Automation ("wants to control") | UserNotificationCenter | Don't Allow / Allow |
+
+Calendar/Reminders, Bluetooth, HomeKit, Media Library, Speech Recognition
+and friends use the same prompt machinery and are expected to behave the
+same (not individually triggered). Camera/mic requests from an app lacking
+`com.apple.security.device.{camera,audio-input}` are silently denied — no
+prompt at all.
+
+**universalAccessAuthWarn family — no native approve path; our Allow
+button covers all of them:**
+
+- `kTCCServiceAccessibility` — "Device Control and Data Access" (verified)
+- `kTCCServiceListenEvent` — "Keystroke Receiving" (verified end to end)
+- `kTCCServiceScreenCapture` — "Screen Recording" (verified the dialog is
+  owned by this agent and gets our Allow button; grant path is identical)
+- `kTCCServicePostEvent`, `kTCCServiceRemoteDesktop` — same agent/entitlement,
+  untested but same code path
+
+**Other cases:**
+
+- **Full Disk Access** has no prompt API at all — denial is silent; granting
+  is Settings-only by design. Nothing to hook.
+- **Files & Folders (Documents/Desktop/Downloads)**: no prompt fired for an
+  adhoc non-sandboxed probe even under LaunchServices attribution — read
+  and write succeeded silently. Not triggerable here.
+- **Local Network**: Bonjour browse from the probe did not prompt
+  (probably requires an actual local connect, or suppresses unentitled
+  apps). Historically a native Allow prompt; unverified.
+- **Notifications** are owned by usernoted/NotificationCenter with native
+  Allow — separate mechanism entirely.
