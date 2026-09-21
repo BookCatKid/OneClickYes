@@ -217,6 +217,14 @@ static NSTextField *label(NSString *s) {
     return t;
 }
 
+// Vertically center a label's text within a region — height estimation
+// error splits evenly above and below instead of pooling at the bottom.
+static void centerLabel(NSTextField *t, CGFloat x, CGFloat w,
+                        CGFloat y, CGFloat h) {
+    NSSize sz = [t.cell cellSizeForBounds:NSMakeRect(0, 0, w, 10000)];
+    t.frame = NSMakeRect(x, y + (h - sz.height) / 2, w, sz.height);
+}
+
 static NSBox *card(NSRect f) {
     NSBox *b = [[NSBox alloc] initWithFrame:f];
     b.boxType = NSBoxCustom;
@@ -262,6 +270,7 @@ static NSUInteger countMatching(NSArray<NSString *> *lines, NSString *needle) {
                    [NSString stringWithFormat:@"Injection environment: %@",
                     env ? @"set" : @"not set"], nil),
     ]);
+    centerLabel(self.globalStatus, 14, 472, 0, 88);
 
     NSArray<NSString *> *lines = logLines();
 
@@ -286,6 +295,7 @@ static NSUInteger countMatching(NSArray<NSString *> *lines, NSString *needle) {
         [gk addObject:statusLine(@"clock", gray,
             [NSString stringWithFormat:@"Last: %@", oneLine(gkLast)], subTextAttrs())];
     self.gkStatus.attributedStringValue = joinLines(gk);
+    centerLabel(self.gkStatus, 14, 472, 74, 86);
 
     // --- Permissions pane stats ---
     pid_t warn = procPID(kWarnSvc);
@@ -308,6 +318,7 @@ static NSUInteger countMatching(NSArray<NSString *> *lines, NSString *needle) {
         [tc addObject:statusLine(@"clock", gray,
             [NSString stringWithFormat:@"Last: %@", oneLine(tccLast)], subTextAttrs())];
     self.tccStatus.attributedStringValue = joinLines(tc);
+    centerLabel(self.tccStatus, 14, 472, 74, 86);
 
     // A test app proves success by writing its marker file from its own code.
     [self pollPending:&_gkPending marker:self.gkMarker start:self.gkStart
