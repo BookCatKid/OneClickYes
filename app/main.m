@@ -201,6 +201,12 @@ static NSDictionary *subTextAttrs(void) {
              NSFontAttributeName: [NSFont systemFontOfSize:11]};
 }
 
+// Keep "Last:" entries to a single line so the status block height is stable.
+static NSString *oneLine(NSString *s) {
+    if (s.length > 72) s = [[s substringToIndex:69] stringByAppendingString:@"…"];
+    return s;
+}
+
 // Explicitly non-interactive label — macOS 27 text fields are selectable
 // by default, which lets a click put them in an editing-looking state and
 // strip the attributed-string icons.
@@ -278,7 +284,7 @@ static NSUInteger countMatching(NSArray<NSString *> *lines, NSString *needle) {
          (unsigned long)added, added == 1 ? @"" : @"s"], nil)];
     if (gkLast)
         [gk addObject:statusLine(@"clock", gray,
-            [NSString stringWithFormat:@"Last: %@", gkLast], subTextAttrs())];
+            [NSString stringWithFormat:@"Last: %@", oneLine(gkLast)], subTextAttrs())];
     self.gkStatus.attributedStringValue = joinLines(gk);
 
     // --- Permissions pane stats ---
@@ -300,7 +306,7 @@ static NSUInteger countMatching(NSArray<NSString *> *lines, NSString *needle) {
          (unsigned long)granted, granted == 1 ? @"" : @"s"], nil)];
     if (tccLast)
         [tc addObject:statusLine(@"clock", gray,
-            [NSString stringWithFormat:@"Last: %@", tccLast], subTextAttrs())];
+            [NSString stringWithFormat:@"Last: %@", oneLine(tccLast)], subTextAttrs())];
     self.tccStatus.attributedStringValue = joinLines(tc);
 
     // A test app proves success by writing its marker file from its own code.
@@ -477,9 +483,9 @@ static NSUInteger countMatching(NSArray<NSString *> *lines, NSString *needle) {
     info.frame = NSMakeRect(20, 400, 500, 52);
     [v addSubview:info];
 
-    NSBox *globalCard = card(NSMakeRect(20, 296, 500, 96));
+    NSBox *globalCard = card(NSMakeRect(20, 304, 500, 88));
     self.globalStatus = label(@"");
-    self.globalStatus.frame = NSMakeRect(14, 12, 472, 74);
+    self.globalStatus.frame = NSMakeRect(14, 10, 472, 68);
     [globalCard addSubview:self.globalStatus];
     [v addSubview:globalCard];
 
@@ -493,22 +499,22 @@ static NSUInteger countMatching(NSArray<NSString *> *lines, NSString *needle) {
     [v addSubview:self.seg];
 
     // ---- Gatekeeper pane ----
-    self.gkPane = card(NSMakeRect(20, 64, 500, 188));
+    self.gkPane = card(NSMakeRect(20, 72, 500, 176));
     self.gkStatus = label(@"");
-    self.gkStatus.frame = NSMakeRect(14, 72, 472, 106);
+    self.gkStatus.frame = NSMakeRect(14, 82, 472, 80);
     [self.gkPane addSubview:self.gkStatus];
 
     self.primaryCb = [NSButton checkboxWithTitle:
         @"Make “Open Anyway” the default button (accent color, Return key)"
                                           target:self action:@selector(togglePrimary:)];
-    self.primaryCb.frame = NSMakeRect(14, 36, 472, 22);
+    self.primaryCb.frame = NSMakeRect(14, 48, 472, 22);
     self.primaryCb.state = [[NSFileManager defaultManager]
         fileExistsAtPath:primaryFlagPath()] ? NSControlStateValueOn : NSControlStateValueOff;
     [self.gkPane addSubview:self.primaryCb];
 
     NSButton *testGK = [NSButton buttonWithTitle:@"Test Gatekeeper"
                                         target:self action:@selector(testDialog:)];
-    testGK.frame = NSMakeRect(14, 4, 130, 28);
+    testGK.frame = NSMakeRect(14, 12, 130, 28);
     testGK.bezelStyle = NSBezelStyleRounded;
     testGK.image = [NSImage imageWithSystemSymbolName:@"play.circle"
                                accessibilityDescription:nil];
@@ -517,14 +523,14 @@ static NSUInteger countMatching(NSArray<NSString *> *lines, NSString *needle) {
 
     self.gkResult = label(@"");
     self.gkResult.font = [NSFont systemFontOfSize:11];
-    self.gkResult.frame = NSMakeRect(152, 8, 334, 20);
+    self.gkResult.frame = NSMakeRect(152, 16, 334, 20);
     [self.gkPane addSubview:self.gkResult];
     [v addSubview:self.gkPane];
 
     // ---- Permissions pane ----
-    self.tccPane = card(NSMakeRect(20, 64, 500, 188));
+    self.tccPane = card(NSMakeRect(20, 72, 500, 176));
     self.tccStatus = label(@"");
-    self.tccStatus.frame = NSMakeRect(14, 72, 472, 106);
+    self.tccStatus.frame = NSMakeRect(14, 82, 472, 80);
     [self.tccPane addSubview:self.tccStatus];
 
     NSTextField *tccNote = label(
@@ -533,12 +539,12 @@ static NSUInteger countMatching(NSArray<NSString *> *lines, NSString *needle) {
         @"Allow button are left alone.");
     tccNote.font = [NSFont systemFontOfSize:11];
     tccNote.textColor = [NSColor secondaryLabelColor];
-    tccNote.frame = NSMakeRect(14, 30, 472, 30);
+    tccNote.frame = NSMakeRect(14, 46, 472, 30);
     [self.tccPane addSubview:tccNote];
 
     NSButton *testTCC = [NSButton buttonWithTitle:@"Test Permission"
                                          target:self action:@selector(testPermission:)];
-    testTCC.frame = NSMakeRect(14, 4, 130, 28);
+    testTCC.frame = NSMakeRect(14, 10, 130, 28);
     testTCC.bezelStyle = NSBezelStyleRounded;
     testTCC.image = [NSImage imageWithSystemSymbolName:@"play.circle"
                                 accessibilityDescription:nil];
@@ -547,7 +553,7 @@ static NSUInteger countMatching(NSArray<NSString *> *lines, NSString *needle) {
 
     self.tccResult = label(@"");
     self.tccResult.font = [NSFont systemFontOfSize:11];
-    self.tccResult.frame = NSMakeRect(152, 8, 334, 20);
+    self.tccResult.frame = NSMakeRect(152, 14, 334, 20);
     [self.tccPane addSubview:self.tccResult];
     self.tccPane.hidden = YES;
     [v addSubview:self.tccPane];
