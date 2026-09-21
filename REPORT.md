@@ -452,3 +452,26 @@ no record written). No grant occurs without an explicit click.
   LS-registered or not is not the deciding factor.
 - A requester that exits before the agent evaluates it is auto-denied too
   (peer XPC dead → nothing to warn about).
+
+### Other warning types (verified)
+
+The Allow button is not Accessibility-specific: the same
+`universalAccessAuthWarn` agent presents the whole "control / monitor /
+capture" warning family, and the hook resolves the service per-warning via
+`_tccServiceForWarningType` rather than hardcoding. Verified a second type
+end to end: the "Keystroke Receiving" prompt (`kTCCServiceListenEvent`,
+Input Monitoring) got the Allow button; clicking it wrote granted records
+(bundle-id + path identities) and the requester's `CGEventTapCreate`
+succeeded on relaunch. The agent's modify entitlement covers
+Accessibility, PostEvent, ListenEvent, ScreenCapture, and RemoteDesktop, so
+the same path should cover all of them.
+
+Not covered: permission prompts owned by other processes (camera,
+microphone, Files & Folders, Full Disk Access, Local Network, etc.) — those
+are different dialogs that would need their own investigation.
+
+Caveat: one of two ListenEvent clicks stored a denied record despite the
+set call returning success (cause undetermined — possibly a request-
+lifecycle race where the pending record is created between AUTHREQ and our
+set). The click handler now verifies the result via
+`TCCAccessCopyInformation` and retries once before dismissing.

@@ -79,14 +79,37 @@ static id hook_alertForURL(id self, SEL _cmd, id url, id info) {
 
 static int (*p_TCCAccessSetForBundle)(id, CFBundleRef, id);
 static int (*p_TCCAccessSetForPath)(id, id, id);
+static id (*p_TCCAccessCopyInformation)(id);
 static CFStringRef *p_kTCCInfoGranted;
+static CFStringRef *p_kTCCInfoPath;
+static CFStringRef *p_kTCCInfoSubjectIdentityDictionary;
+static CFStringRef *p_kTCCCodeIdentityIdentifier;
 
 static BOOL gk_resolve_tcc(void) {
     if (p_TCCAccessSetForPath) return YES;
     p_TCCAccessSetForBundle = dlsym(RTLD_DEFAULT, "TCCAccessSetForBundle");
     p_TCCAccessSetForPath = dlsym(RTLD_DEFAULT, "TCCAccessSetForPath");
+    p_TCCAccessCopyInformation = dlsym(RTLD_DEFAULT, "TCCAccessCopyInformation");
     p_kTCCInfoGranted = dlsym(RTLD_DEFAULT, "kTCCInfoGranted");
-    return p_TCCAccessSetForBundle && p_TCCAccessSetForPath && p_kTCCInfoGranted;
+    p_kTCCInfoPath = dlsym(RTLD_DEFAULT, "kTCCInfoPath");
+    p_kTCCInfoSubjectIdentityDictionary =
+        dlsym(RTLD_DEFAULT, "kTCCInfoSubjectIdentityDictionary");
+    p_kTCCCodeIdentityIdentifier =
+        dlsym(RTLD_DEFAULT, "kTCCCodeIdentityIdentifier");
+    return p_TCCAccessSetForBundle && p_TCCAccessSetForPath &&
+           p_TCCAccessCopyInformation && p_kTCCInfoGranted && p_kTCCInfoPath &&
+           p_kTCCInfoSubjectIdentityDictionary && p_kTCCCodeIdentityIdentifier;
+}
+
+static BOOL gk_is_granted(id service, NSString *bid, NSString *path) {
+    for (NSDictionary *r in p_TCCAccessCopyInformation(service)) {
+        NSString *rid = r[(id)*p_kTCCInfoSubjectIdentityDictionary]
+                         [(id)*p_kTCCCodeIdentityIdentifier];
+        BOOL match = (bid && [rid isEqual:bid]) ||
+                     (path && [r[(id)*p_kTCCInfoPath] isEqual:path]);
+        if (match && [r[(id)*p_kTCCInfoGranted] boolValue]) return YES;
+    }
+    return NO;
 }
 
 static void gk_allow_clicked(id self_, SEL _cmd, id sender) {
@@ -97,23 +120,30 @@ static void gk_allow_clicked(id self_, SEL _cmd, id sender) {
     id service = [info performSelector:@selector(_tccServiceForWarningType)];
     if (!info || !service) { gklog(@"allow: no warningInfo/service"); return; }
     NSDictionary *grant = @{(id)*p_kTCCInfoGranted: @YES};
-    int rc = -1;
     NSBundle *bundle = [info bundle];
-    if (bundle.bundleURL) {
-        CFBundleRef cb = CFBundleCreate(kCFAllocatorDefault,
-                                        (CFURLRef)bundle.bundleURL);
-        if (cb) {
-            rc = p_TCCAccessSetForBundle(service, cb, grant);
-            CFRelease(cb);
+    NSString *path = bundle.bundleURL.path;
+    if (!path.length) path = [[info binaryURL] path];
+    // Grant, then verify the record landed — one observed case stored a
+    // denied record despite a successful return, so retry once.
+    for (int attempt = 0; attempt < 2; attempt++) {
+        int rc = -1;
+        if (bundle.bundleURL) {
+            CFBundleRef cb = CFBundleCreate(kCFAllocatorDefault,
+                                            (CFURLRef)bundle.bundleURL);
+            if (cb) {
+                rc = p_TCCAccessSetForBundle(service, cb, grant);
+                CFRelease(cb);
+            }
+        }
+        if (rc != 0 && path.length)
+            rc = p_TCCAccessSetForPath(service, path, grant);
+        gklog(@"allow: service=%@ bundle=%@ rc=%d attempt=%d",
+              service, bundle, rc, attempt);
+        if (gk_is_granted(service, bundle.bundleIdentifier, path)) {
+            gklog(@"allow: granted verified for %@", bundle.bundleURL.path);
+            break;
         }
     }
-    if (rc != 0) {
-        NSString *path = bundle.bundleURL.path;
-        if (!path.length) path = [[info binaryURL] path];
-        if (path.length)
-            rc = p_TCCAccessSetForPath(service, path, grant);
-    }
-    gklog(@"allow: service=%@ bundle=%@ rc=%d", service, bundle, rc);
     [ctrl performSelector:@selector(pressOKButton:) withObject:sender];
 }
 
