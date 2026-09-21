@@ -428,13 +428,19 @@ static NSBox *card(NSRect f) {
     self.gkStart = [NSDate date];
     self.gkResult.stringValue = @"Waiting for the test app to launch; click “Open Anyway” in the dialog";
     self.gkResult.textColor = [NSColor secondaryLabelColor];
-    // Unsigned + quarantined -> the "could not verify" dialog.
+    // Unsigned + quarantined -> the "could not verify" dialog. Flag 0002
+    // leaves assessment pending; 0083 would mark it already-rejected and
+    // show the harsher "damaged" dialog instead.
     run(@"/usr/bin/xattr",
         @[@"-w", @"com.apple.quarantine",
-          [NSString stringWithFormat:@"0083;%llx;OCYTest;%@",
+          [NSString stringWithFormat:@"0002;%llx;OCYTest;%@",
            (unsigned long long)time(NULL), [[NSUUID UUID] UUIDString]],
           dst], nil);
-    [[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:dst]];
+    // Async: openURL: blocks the main thread while a quarantined app's
+    // launch is gated on the Gatekeeper dialog.
+    [[NSWorkspace sharedWorkspace] openApplicationAtURL:[NSURL fileURLWithPath:dst]
+        configuration:[NSWorkspaceOpenConfiguration configuration]
+        completionHandler:nil];
 }
 
 - (void)testPermission:(id)sender {
@@ -456,7 +462,9 @@ static NSBox *card(NSRect f) {
     info[@"CFBundleName"] = base;
     [info writeToFile:plist atomically:YES];
     run(@"/usr/bin/codesign", @[@"-f", @"-s", @"-", dst], nil);
-    [[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:dst]];
+    [[NSWorkspace sharedWorkspace] openApplicationAtURL:[NSURL fileURLWithPath:dst]
+        configuration:[NSWorkspaceOpenConfiguration configuration]
+        completionHandler:nil];
 }
 
 - (void)applicationDidFinishLaunching:(NSNotification *)n {
