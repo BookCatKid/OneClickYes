@@ -23,8 +23,9 @@ static void gklog(NSString *fmt, ...) {
 }
 
 // Per-hook kill switches: a flag file in the support dir disables that
-// hook. Checked once at load — takes effect when the dialog process
-// next spawns (both agents are per-request/one-shot).
+// hook. Checked at load AND inside each hook — the agents are
+// long-lived, so a per-dialog check makes toggling apply to the very
+// next dialog without waiting for a respawn.
 static BOOL ocy_disabled(const char *flag) {
     const char *home = getenv("HOME");
     if (!home) return NO;
@@ -39,7 +40,7 @@ static id (*orig_alertForURL)(id, SEL, id, id) = NULL;
 // -[GKQuarantineResolver alertForURL:malwareInfo:] -> NSAlert*
 static id hook_alertForURL(id self, SEL _cmd, id url, id info) {
     NSAlert *alert = ((id(*)(id,SEL,id,id))orig_alertForURL)(self, _cmd, url, info);
-    if (!alert) return alert;
+    if (!alert || ocy_disabled("disabled.gk")) return alert;
     NSMutableString *desc = [NSMutableString string];
     BOOL hasApprove = NO;
     for (NSButton *b in [alert buttons]) {
@@ -167,6 +168,7 @@ static void (*orig_awakeFromNib)(id, SEL) = NULL;
 
 static void hook_awakeFromNib(id self, SEL _cmd) {
     ((void(*)(id,SEL))orig_awakeFromNib)(self, _cmd);
+    if (ocy_disabled("disabled.tcc")) return;
     NSWindow *win = [self window];
     NSView *content = [win contentView];
     if (!content) return;

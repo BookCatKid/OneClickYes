@@ -390,7 +390,14 @@ static NSBox *card(NSRect f) {
         [@"" writeToFile:f atomically:YES
              encoding:NSUTF8StringEncoding error:nil];
     }
-    kickstartAgent();   // respawn the uiagent so the flag takes effect now
+    // Respawn the owning agent so a flag change takes effect now. Needed
+    // on enable: a process that loaded while disabled never installed the
+    // swizzle (disabling alone is also caught by the per-dialog check).
+    if (cb == self.enableGk) {
+        kickstartAgent();
+    } else {
+        run(@"/usr/bin/pkill", @[@"-f", @"universalAccessAuthWarn"], nil);
+    }
     self.message.stringValue = cb.state == NSControlStateValueOn
         ? @"Hook enabled; applies when the dialog process next spawns."
         : @"Hook disabled; applies when the dialog process next spawns.";
