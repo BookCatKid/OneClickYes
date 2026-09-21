@@ -1,4 +1,4 @@
-// GKOpenAnyway.dylib — runtime patches (macOS 27, SIP off).
+// OneClickYes.dylib — runtime patches (macOS 27, SIP off).
 // 1) CoreServicesUIAgent: adds an "Open Anyway" button (tag 105 -> Apple's
 //    override flow) to Gatekeeper NSAlerts that lack an approval button.
 // 2) universalAccessAuthWarn: adds an "Allow" button to the Device Control
@@ -10,15 +10,16 @@
 #import <AppKit/AppKit.h>
 #import <mach-o/dyld.h>
 #import <limits.h>
+#import <unistd.h>
 #import <stdio.h>
 
 static void gklog(NSString *fmt, ...) {
     va_list ap; va_start(ap, fmt);
     NSString *s = [[NSString alloc] initWithFormat:fmt arguments:ap];
     va_end(ap);
-    FILE *f = fopen("/tmp/gkopenanyway.log", "a");
+    FILE *f = fopen("/tmp/oneclickyes.log", "a");
     if (f) { fprintf(f, "[%lld] %s\n", (long long)getpid(), s.UTF8String); fclose(f); }
-    NSLog(@"GKOpenAnyway: %@", s);
+    NSLog(@"OneClickYes: %@", s);
 }
 
 static id (*orig_alertForURL)(id, SEL, id, id) = NULL;
@@ -51,7 +52,7 @@ static id hook_alertForURL(id self, SEL _cmd, id url, id info) {
         if (home) {
             NSString *flag = [[NSString stringWithUTF8String:home]
                 stringByAppendingPathComponent:
-                @"Library/Application Support/GKOpenAnyway/primary"];
+                @"Library/Application Support/OneClickYes/primary"];
             if ([[NSFileManager defaultManager] fileExistsAtPath:flag]) {
                 for (NSButton *b in [alert buttons])
                     if ([b.keyEquivalent isEqualToString:@"\r"])
@@ -121,11 +122,14 @@ static void gk_allow_clicked(id self_, SEL _cmd, id sender) {
     if (!info || !service) { gklog(@"allow: no warningInfo/service"); return; }
     NSDictionary *grant = @{(id)*p_kTCCInfoGranted: @YES};
     NSBundle *bundle = [info bundle];
+    NSString *bid = bundle.bundleIdentifier;
     NSString *path = bundle.bundleURL.path;
     if (!path.length) path = [[info binaryURL] path];
-    // Grant, then verify the record landed — one observed case stored a
-    // denied record despite a successful return, so retry once.
-    for (int attempt = 0; attempt < 2; attempt++) {
+    // Dismiss via Apple's own path FIRST: the request lifecycle writes a
+    // denied record when the dialog closes without consent, which clobbers
+    // a grant written before dismissal (observed: rc=1 but kTCCInfoGranted=0).
+    [ctrl performSelector:@selector(pressOKButton:) withObject:sender];
+    for (int attempt = 0; attempt < 6; attempt++) {
         int rc = -1;
         if (bundle.bundleURL) {
             CFBundleRef cb = CFBundleCreate(kCFAllocatorDefault,
@@ -139,12 +143,12 @@ static void gk_allow_clicked(id self_, SEL _cmd, id sender) {
             rc = p_TCCAccessSetForPath(service, path, grant);
         gklog(@"allow: service=%@ bundle=%@ rc=%d attempt=%d",
               service, bundle, rc, attempt);
-        if (gk_is_granted(service, bundle.bundleIdentifier, path)) {
-            gklog(@"allow: granted verified for %@", bundle.bundleURL.path);
+        if (gk_is_granted(service, bid, path)) {
+            gklog(@"allow: granted verified for %@", path);
             break;
         }
+        usleep(250 * 1000);
     }
-    [ctrl performSelector:@selector(pressOKButton:) withObject:sender];
 }
 
 static void (*orig_awakeFromNib)(id, SEL) = NULL;

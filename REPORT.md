@@ -135,7 +135,7 @@ contains tag 105 or tag 1000.
 
 ## 4. Proof of concept (verified)
 
-`dylib/GKOpenAnyway.m` (~75 lines): constructor self-gates to CoreServicesUIAgent,
+`dylib/OneClickYes.m` (~75 lines): constructor self-gates to CoreServicesUIAgent,
 `method_setImplementation`-swizzles `alertForURL:malwareInfo:`; after the
 original returns, if no button already has tag 105 it calls
 `addButtonWithTitle:@"Open Anyway"` + `setTag:105`.
@@ -160,7 +160,7 @@ Verified results (unsigned, quarantined test app):
   loads the dylib at exec (it early-returns unless the executable path contains
   `CoreServicesUIAgent`). Harmless but noisy; keep the constructor minimal.
   `setenv` also does not survive logout/reboot — use the included
-  `local.gkopenanyway.plist` LaunchAgent to re-apply at login.
+  `local.oneclickyes.plist` LaunchAgent to re-apply at login.
 - The injected dylib must carry an `arm64e` slice (built `-arch arm64 -arch arm64e`),
   adhoc signature is fine.
 - The override requires interactive admin auth (Touch ID/password) — this is
@@ -188,22 +188,22 @@ Verified results (unsigned, quarantined test app):
 
 ```sh
 # build
-clang -arch arm64 -arch arm64e -dynamiclib -o GKOpenAnyway.dylib dylib/GKOpenAnyway.m \
+clang -arch arm64 -arch arm64e -dynamiclib -o OneClickYes.dylib dylib/OneClickYes.m \
   -framework Foundation -framework AppKit
-codesign -s - GKOpenAnyway.dylib
+codesign -s - OneClickYes.dylib
 
 # activate (this session)
 cli/install.sh        # = launchctl setenv + kickstart -k gui/$(id -u)/com.apple.coreservices.uiagent
 
 # persist across login (optional)
-cp local.gkopenanyway.plist ~/Library/LaunchAgents/
-launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/local.gkopenanyway.plist
+cp local.oneclickyes.plist ~/Library/LaunchAgents/
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/local.oneclickyes.plist
 
 # remove
 cli/uninstall.sh
 ```
 
-Log: `/tmp/gkopenanyway.log` (hook installs, alerts seen, buttons added).
+Log: `/tmp/oneclickyes.log` (hook installs, alerts seen, buttons added).
 
 ## 8. No official way to surface the button (verified)
 
@@ -340,22 +340,31 @@ does this; `clang -o` output is already safe (new file each build).
 
 ## 10. Installer app
 
-`GKOpenAnyway.app` (built by `build-app.sh`) — a small AppKit installer,
+`OneClickYes.app` (built by `build-app.sh`) — a small AppKit installer,
 no root required (everything runs in the user's gui domain):
 
 - **Install & Enable**: copies the dylib to
-  `~/Library/Application Support/GKOpenAnyway/`, adhoc-signs it, writes and
-  bootstraps `~/Library/LaunchAgents/local.gkopenanyway.plist`
+  `~/Library/Application Support/OneClickYes/`, adhoc-signs it, writes and
+  bootstraps `~/Library/LaunchAgents/local.oneclickyes.plist`
   (`RunAtLoad` → `launchctl setenv` + `kickstart` — one-shot, exits), then
   applies the env and restarts the agent immediately.
 - **Uninstall**: boots out the LaunchAgent, removes the plist, `unsetenv`s,
   restarts the agent clean, deletes the support directory. Fully reversible.
-- **Test the dialog**: drops a fresh unsigned quarantined app
-  (`GKTest-<random>.app`) and opens it, reproducing the "…could not verify…"
+- **Test Gatekeeper**: drops a fresh unsigned quarantined app
+  (`OCYTest-<random>.app`) and opens it, reproducing the "…could not verify…"
   dialog on demand. The test app writes a unique marker file
-  (`/tmp/gktest_LAUNCHED_<name>`) from `main()` — the installer watches for it
+  (`/tmp/ocytest_LAUNCHED_<name>`) from `main()` — the installer watches for it
   and shows a green "Test app launched — the Open Anyway button works" line
   once the launch actually completes (120s timeout otherwise).
+- **Test Permission**: drops a fresh `OCYProbe-<random>.app` (new bundle id
+  per copy, adhoc re-signed) that calls
+  `AXIsProcessTrustedWithOptions(prompt:YES)` — raising the real permission
+  dialog on demand. Since TCC trust state is cached per-process, the probe
+  re-checks via a fresh child (`--check` argv) every 2s and writes
+  `/tmp/ocyprobe_GRANTED_<name>` when trust is functionally active.
+- **Migration**: on launch the app migrates a GKOpenAnyway install — moves
+  the support dir (preserving the `primary` flag), boots out and removes
+  the old LaunchAgent, and rewrites the injection env to the new path.
 - **Make "Open Anyway" the default button** (optional checkbox): creates a
   flag file in the support dir. When present, the dylib clears `keyEquivalent`
   from Apple's existing default button and sets the tag-105 button's
@@ -434,8 +443,14 @@ if the executable path contains `universalAccessAuthWarn`, swizzle
 linked) so the private framework never enters the load dependencies of other
 processes. On click, the handler pulls `warningInfo` off the window
 controller — real requester identity, not display text — resolves the
-service, calls the grant API, then dismisses via Apple's own
-`pressOKButton:`.
+service, then **dismisses first** via Apple's own `pressOKButton:` and
+only then writes the grant. Ordering matters: the request lifecycle
+records a denied auth result when the dialog closes without consent, and
+that write can clobber a grant issued beforehand (observed: `rc=1` from
+the setter, `kTCCInfoGranted=0` in the record, `AUTHREQ_RESULT authValue=0`
+on re-check). After dismissing, the handler sets the grant and verifies
+via `TCCAccessCopyInformation`, retrying briefly until the record shows
+granted.
 
 Verified on screen: dialog renders "…would like to control this Mac and
 access your data" with Allow between Help and Open System Settings; clicking
@@ -470,11 +485,13 @@ Not covered: permission prompts owned by other processes (camera,
 microphone, Files & Folders, Full Disk Access, Local Network, etc.) — those
 are different dialogs that would need their own investigation.
 
-Caveat: one of two ListenEvent clicks stored a denied record despite the
-set call returning success (cause undetermined — possibly a request-
-lifecycle race where the pending record is created between AUTHREQ and our
-set). The click handler now verifies the result via
-`TCCAccessCopyInformation` and retries once before dismissing.
+Caveat: early builds stored a denied record despite the set call
+returning success — the pending request's denied result lands at
+dialog-close time and overwrote grants written while the window was still
+up. Fixed by dismissing before granting; the handler then verifies via
+`TCCAccessCopyInformation` and retries (~1.5s budget) until the record
+shows `kTCCInfoGranted=1`. Verified on a fresh Accessibility requester:
+single click → `granted verified` → requester functionally trusted.
 
 ### Other permission dialogs on macOS 27 (verified map)
 

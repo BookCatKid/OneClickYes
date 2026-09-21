@@ -1,22 +1,40 @@
-// GKOpenAnyway — installer/controller for the CoreServicesUIAgent injection.
-// No root required: everything runs in the user's gui launchd domain.
+// OneClickYes — installer/controller for the dialog injection.
+// Adds "Open Anyway" to Gatekeeper's blocked-app dialog and "Allow" to the
+// TCC permission warnings (Accessibility, Input Monitoring, Screen
+// Recording). No root required: everything runs in the user's gui launchd
+// domain.
 #import <Cocoa/Cocoa.h>
 
-static NSString *const kLabel    = @"local.gkopenanyway";
+static NSString *const kLabel    = @"local.oneclickyes";
 static NSString *const kAgentSvc = @"com.apple.coreservices.uiagent";
+static NSString *const kWarnSvc  = @"universalAccessAuthWarn";
+
+// Legacy (GKOpenAnyway) paths, for one-time migration.
+static NSString *const kOldLabel = @"local.gkopenanyway";
 
 static NSString *supportDir(void) {
+    return [NSHomeDirectory() stringByAppendingPathComponent:
+            @"Library/Application Support/OneClickYes"];
+}
+static NSString *oldSupportDir(void) {
     return [NSHomeDirectory() stringByAppendingPathComponent:
             @"Library/Application Support/GKOpenAnyway"];
 }
 static NSString *dylibPath(void) {
-    return [supportDir() stringByAppendingPathComponent:@"GKOpenAnyway.dylib"];
+    return [supportDir() stringByAppendingPathComponent:@"OneClickYes.dylib"];
+}
+static NSString *oldDylibPath(void) {
+    return [oldSupportDir() stringByAppendingPathComponent:@"GKOpenAnyway.dylib"];
 }
 static NSString *agentPlistPath(void) {
     return [NSHomeDirectory() stringByAppendingPathComponent:
+            @"Library/LaunchAgents/local.oneclickyes.plist"];
+}
+static NSString *oldAgentPlistPath(void) {
+    return [NSHomeDirectory() stringByAppendingPathComponent:
             @"Library/LaunchAgents/local.gkopenanyway.plist"];
 }
-static NSString *logPath(void) { return @"/tmp/gkopenanyway.log"; }
+static NSString *logPath(void) { return @"/tmp/oneclickyes.log"; }
 static NSString *primaryFlagPath(void) {
     return [supportDir() stringByAppendingPathComponent:@"primary"];
 }
@@ -25,6 +43,11 @@ static NSString *run(NSString *launch, NSArray<NSString *> *args, int *status) {
     NSTask *t = [NSTask new];
     t.launchPath = launch;
     t.arguments = args ?: @[];
+    // Never propagate DYLD_INSERT_LIBRARIES to children: if the configured
+    // path is ever missing the child aborts in dyld before it can run.
+    NSMutableDictionary *env = [NSProcessInfo.processInfo.environment mutableCopy];
+    [env removeObjectForKey:@"DYLD_INSERT_LIBRARIES"];
+    t.environment = env;
     NSPipe *out = [NSPipe pipe], *err = [NSPipe pipe];
     t.standardOutput = out; t.standardError = err;
     @try { [t launch]; } @catch (...) { if (status) *status = -1; return @""; }
@@ -51,13 +74,12 @@ static NSString *dyldEnv(void) {
 
 static BOOL envActive(void) { return [dyldEnv() isEqualToString:dylibPath()]; }
 
-static pid_t agentPID(void) {
-    NSString *s = run(@"/usr/bin/pgrep", @[@"-x", @"CoreServicesUIAgent"], nil);
+static pid_t procPID(NSString *name) {
+    NSString *s = run(@"/usr/bin/pgrep", @[@"-x", name], nil);
     return (pid_t)s.intValue;
 }
 
-static BOOL agentLoaded(void) {
-    pid_t pid = agentPID();
+static BOOL procLoaded(pid_t pid) {
     if (!pid) return NO;
     NSString *s = run(@"/bin/ps", @[@"eww", @"-p", [@(pid) stringValue]], nil);
     return [s containsString:dylibPath()];
@@ -90,6 +112,44 @@ static void writeAgentPlist(void) {
             encoding:NSUTF8StringEncoding error:nil];
 }
 
+// One-time migration from a GKOpenAnyway install to OneClickYes paths.
+static void migrateLegacyInstall(void) {
+    NSFileManager *fm = [NSFileManager defaultManager];
+    BOOL migrated = NO;
+    if ([fm fileExistsAtPath:oldSupportDir()]) {
+        if (![fm fileExistsAtPath:supportDir()])
+            [fm moveItemAtPath:oldSupportDir() toPath:supportDir() error:nil];
+        // After the dir move the payload sits at its old name in the new dir.
+        NSString *moved = [supportDir() stringByAppendingPathComponent:
+                           @"GKOpenAnyway.dylib"];
+        if ([fm fileExistsAtPath:moved])
+            [fm moveItemAtPath:moved toPath:dylibPath() error:nil];
+        else if ([fm fileExistsAtPath:oldDylibPath()])
+            [fm moveItemAtPath:oldDylibPath() toPath:dylibPath() error:nil];
+        [fm removeItemAtPath:oldSupportDir() error:nil];
+        migrated = YES;
+    }
+    if ([fm fileExistsAtPath:oldAgentPlistPath()]) {
+        run(@"/bin/launchctl",
+            @[@"bootout",
+              [NSString stringWithFormat:@"gui/%@/%@", uidStr(), kOldLabel]], nil);
+        [fm removeItemAtPath:oldAgentPlistPath() error:nil];
+        migrated = YES;
+    }
+    if ([dyldEnv() isEqualToString:oldDylibPath()]) {
+        run(@"/bin/launchctl", @[@"setenv", @"DYLD_INSERT_LIBRARIES",
+                                 dylibPath()], nil);
+        migrated = YES;
+    }
+    if (migrated &&
+        [fm fileExistsAtPath:agentPlistPath()]) {
+        // Re-register the agent under the new label.
+        run(@"/bin/launchctl",
+            @[@"bootstrap", [NSString stringWithFormat:@"gui/%@", uidStr()],
+              agentPlistPath()], nil);
+    }
+}
+
 @interface GKDelegate : NSObject <NSApplicationDelegate>
 @property (nonatomic) NSTextField *status;
 @property (nonatomic) NSTextField *detail;
@@ -98,6 +158,7 @@ static void writeAgentPlist(void) {
 @property (nonatomic) BOOL testPending;
 @property (nonatomic) NSDate *testStart;
 @property (nonatomic) NSString *testMarker;
+@property (nonatomic) NSString *testSuccessText;
 @end
 
 @implementation GKDelegate
@@ -105,17 +166,20 @@ static void writeAgentPlist(void) {
 - (void)refresh {
     BOOL sip = sipDisabled();
     BOOL env = envActive();
-    BOOL loaded = agentLoaded();
     BOOL plistInstalled = [[NSFileManager defaultManager] fileExistsAtPath:agentPlistPath()];
+    pid_t agent = procPID(@"CoreServicesUIAgent");
+    pid_t warn = procPID(kWarnSvc);
 
     NSMutableString *s = [NSMutableString string];
     [s appendFormat:@"SIP: %@\n", sip ? @"disabled (required)" : @"ENABLED — injection cannot work"];
     [s appendFormat:@"LaunchAgent (auto-apply at login): %@\n",
      plistInstalled ? @"installed" : @"not installed"];
     [s appendFormat:@"Injection environment: %@\n", env ? @"set" : @"not set"];
-    [s appendFormat:@"CoreServicesUIAgent: %@\n",
-     loaded ? @"running — hook active" :
-     (agentPID() ? @"running — hook NOT loaded yet" : @"not running (loads on next Gatekeeper dialog)")];
+    [s appendFormat:@"CoreServicesUIAgent (Gatekeeper): %@\n",
+     procLoaded(agent) ? @"running — hook active" :
+     (agent ? @"running — hook NOT loaded yet" : @"loads on next Gatekeeper dialog")];
+    [s appendFormat:@"universalAccessAuthWarn (permissions): %@\n",
+     procLoaded(warn) ? @"running — hook active" : @"loads on next permission dialog"];
     self.status.stringValue = s;
 
     NSDate *mtime = [[[NSFileManager defaultManager]
@@ -124,14 +188,14 @@ static void writeAgentPlist(void) {
         ? [NSString stringWithFormat:@"Last hook activity: %@", mtime]
         : @"No hook activity logged yet.";
 
-    // A test app proves success by writing its marker file from its own main().
+    // A test app proves success by writing its marker file from its own code.
     if (self.testPending) {
         if (self.testMarker &&
             [[NSFileManager defaultManager] fileExistsAtPath:self.testMarker]) {
             self.testPending = NO;
-            self.testResult.stringValue = @"\u2713 Test app launched — the Open Anyway button works";
+            self.testResult.stringValue = self.testSuccessText;
             self.testResult.textColor = [NSColor systemGreenColor];
-        } else if (self.testStart && [[NSDate date] timeIntervalSinceDate:self.testStart] > 120) {
+        } else if (self.testStart && [[NSDate date] timeIntervalSinceDate:self.testStart] > 130) {
             self.testPending = NO;
             self.testResult.stringValue = @"Test timed out — the app was not approved. Try again.";
             self.testResult.textColor = [NSColor secondaryLabelColor];
@@ -147,9 +211,9 @@ static void writeAgentPlist(void) {
     [fm createDirectoryAtPath:supportDir() withIntermediateDirectories:YES
                    attributes:nil error:nil];
     NSString *src = [[[NSBundle mainBundle] resourcePath]
-        stringByAppendingPathComponent:@"GKOpenAnyway.dylib"];
+        stringByAppendingPathComponent:@"OneClickYes.dylib"];
     NSString *tmp = [supportDir()
-        stringByAppendingPathComponent:@".GKOpenAnyway.dylib.tmp"];
+        stringByAppendingPathComponent:@".OneClickYes.dylib.tmp"];
     [fm removeItemAtPath:tmp error:nil];
     if (![fm copyItemAtPath:src toPath:tmp error:nil]) {
         self.detail.stringValue = @"Failed to copy dylib from app bundle.";
@@ -169,7 +233,7 @@ static void writeAgentPlist(void) {
 
     run(@"/bin/launchctl", @[@"setenv", @"DYLD_INSERT_LIBRARIES", dylibPath()], nil);
     kickstartAgent();
-    self.detail.stringValue = @"Installed. The hook loads the next time CoreServicesUIAgent spawns.";
+    self.detail.stringValue = @"Installed. Hooks load when each dialog process spawns.";
     [self refresh];
 }
 
@@ -196,95 +260,135 @@ static void writeAgentPlist(void) {
     }
 }
 
-- (void)testDialog:(id)sender {
-    // Build a fresh unsigned quarantined app in the support dir and open it.
+// Copy a bundled test app to a fresh random name in the support dir so each
+// test has a unique quarantine/TCC identity, then open it.
+- (NSString *)stageTestApp:(NSString *)bundleName markerPrefix:(NSString *)prefix
+                 pending:(NSString *)pendingText {
     NSString *src = [[[NSBundle mainBundle] resourcePath]
-        stringByAppendingPathComponent:@"GKTest.app"];
+        stringByAppendingPathComponent:bundleName];
     NSFileManager *fm = [NSFileManager defaultManager];
+    NSString *stem = [bundleName stringByDeletingPathExtension];
     for (NSString *f in [fm contentsOfDirectoryAtPath:supportDir() error:nil])
-        if ([f hasPrefix:@"GKTest-"])
+        if ([f hasPrefix:[stem stringByAppendingString:@"-"]])
             [fm removeItemAtPath:[supportDir() stringByAppendingPathComponent:f] error:nil];
-    NSString *name = [NSString stringWithFormat:@"GKTest-%u.app", arc4random()];
+    NSString *name = [NSString stringWithFormat:@"%@-%u.app", stem, arc4random()];
     NSString *dst = [supportDir() stringByAppendingPathComponent:name];
     [fm removeItemAtPath:dst error:nil];
-    if (![[NSFileManager defaultManager] copyItemAtPath:src toPath:dst error:nil]) {
+    if (![fm copyItemAtPath:src toPath:dst error:nil]) {
         self.detail.stringValue = @"Test app missing from bundle.";
-        return;
+        return nil;
     }
-    run(@"/usr/bin/xattr",
-        @[@"-w", @"com.apple.quarantine",
-          [NSString stringWithFormat:@"0083;%llx;GKTest;%@",
-           (unsigned long long)time(NULL), [[NSUUID UUID] UUIDString]],
-          dst], nil);
     NSString *base = [name stringByDeletingPathExtension];
-    self.testMarker = [NSString stringWithFormat:@"/tmp/gktest_LAUNCHED_%@", base];
-    [[NSFileManager defaultManager] removeItemAtPath:self.testMarker error:nil];
+    self.testMarker = [NSString stringWithFormat:@"/tmp/%@_%@", prefix, base];
+    [fm removeItemAtPath:self.testMarker error:nil];
     self.testPending = YES;
     self.testStart = [NSDate date];
-    self.testResult.stringValue = @"Waiting for the test app to launch — click “Open Anyway” in the dialog";
+    self.testResult.stringValue = pendingText;
     self.testResult.textColor = [NSColor secondaryLabelColor];
+    return dst;
+}
+
+- (void)testDialog:(id)sender {
+    NSString *dst = [self stageTestApp:@"OCYTest.app" markerPrefix:@"ocytest_LAUNCHED"
+        pending:@"Waiting for the test app to launch — click “Open Anyway” in the dialog"];
+    if (!dst) return;
+    self.testSuccessText = @"\u2713 Test app launched — the Open Anyway button works";
+    // Unsigned + quarantined -> the "could not verify" dialog.
+    run(@"/usr/bin/xattr",
+        @[@"-w", @"com.apple.quarantine",
+          [NSString stringWithFormat:@"0083;%llx;OCYTest;%@",
+           (unsigned long long)time(NULL), [[NSUUID UUID] UUIDString]],
+          dst], nil);
     [[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:dst]];
     self.detail.stringValue = @"Test app launched — look for the modified Gatekeeper dialog.";
 }
 
+- (void)testPermission:(id)sender {
+    NSString *dst = [self stageTestApp:@"OCYProbe.app" markerPrefix:@"ocyprobe_GRANTED"
+        pending:@"Waiting for the permission dialog — click “Allow”"];
+    if (!dst) return;
+    self.testSuccessText = @"\u2713 App granted Accessibility — the Allow button works";
+    // Fresh bundle id per copy so it always prompts, then re-sign adhoc.
+    NSString *plist = [dst stringByAppendingPathComponent:@"Contents/Info.plist"];
+    NSMutableDictionary *info = [NSMutableDictionary
+        dictionaryWithContentsOfFile:plist];
+    NSString *base = [[dst lastPathComponent] stringByDeletingPathExtension];
+    info[@"CFBundleIdentifier"] =
+        [NSString stringWithFormat:@"local.oneclickyes.probe.%u", arc4random()];
+    info[@"CFBundleName"] = base;
+    [info writeToFile:plist atomically:YES];
+    run(@"/usr/bin/codesign", @[@"-f", @"-s", @"-", dst], nil);
+    [[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:dst]];
+    self.detail.stringValue = @"Probe launched — look for the permission dialog with Allow.";
+}
+
 - (void)applicationDidFinishLaunching:(NSNotification *)n {
+    migrateLegacyInstall();
     NSWindow *w = [[NSWindow alloc]
-        initWithContentRect:NSMakeRect(0, 0, 520, 400)
+        initWithContentRect:NSMakeRect(0, 0, 540, 450)
                   styleMask:NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|
                             NSWindowStyleMaskMiniaturizable
                     backing:NSBackingStoreBuffered defer:NO];
-    w.title = @"GKOpenAnyway";
+    w.title = @"OneClickYes";
     NSView *v = w.contentView;
 
-    NSTextField *title = [NSTextField labelWithString:@"Gatekeeper “Open Anyway” button"];
+    NSTextField *title = [NSTextField labelWithString:@"One-click approvals for macOS prompts"];
     title.font = [NSFont boldSystemFontOfSize:16];
-    title.frame = NSMakeRect(20, 356, 480, 24);
+    title.frame = NSMakeRect(20, 406, 500, 24);
     [v addSubview:title];
 
     NSTextField *info = [NSTextField wrappingLabelWithString:
-        @"Adds an “Open Anyway” button to the “…could not verify…” Gatekeeper dialog. "
-        @"The button uses Apple’s own approval path (Touch ID/password, per-app only). "
-        @"Nothing stays running: the dylib is injected by launchd when the dialog "
-        @"process spawns, and it ignores every other process on the system."];
-    info.frame = NSMakeRect(20, 268, 480, 80);
+        @"Adds “Open Anyway” to the “…could not verify…” Gatekeeper dialog and "
+        @"“Allow” to permission warnings (Accessibility, Input Monitoring, "
+        @"Screen Recording). Both use Apple’s own approval paths — per-app, "
+        @"one explicit click. Nothing stays running: the dylib is injected "
+        @"by launchd when each dialog process spawns, and ignores every "
+        @"other process on the system."];
+    info.frame = NSMakeRect(20, 298, 500, 100);
     [v addSubview:info];
 
     self.status = [NSTextField wrappingLabelWithString:@""];
-    self.status.frame = NSMakeRect(20, 158, 480, 100);
+    self.status.frame = NSMakeRect(20, 172, 500, 120);
     [v addSubview:self.status];
 
     self.detail = [NSTextField wrappingLabelWithString:@""];
     self.detail.font = [NSFont systemFontOfSize:11];
     self.detail.textColor = [NSColor secondaryLabelColor];
-    self.detail.frame = NSMakeRect(20, 124, 480, 30);
+    self.detail.frame = NSMakeRect(20, 138, 500, 30);
     [v addSubview:self.detail];
 
     self.installBtn = [NSButton buttonWithTitle:@"Install & Enable"
                                        target:self action:@selector(install:)];
-    self.installBtn.frame = NSMakeRect(20, 78, 140, 32);
+    self.installBtn.frame = NSMakeRect(20, 92, 140, 32);
     self.installBtn.bezelStyle = NSBezelStyleRounded;
     [v addSubview:self.installBtn];
 
     self.uninstallBtn = [NSButton buttonWithTitle:@"Uninstall"
                                          target:self action:@selector(uninstall:)];
-    self.uninstallBtn.frame = NSMakeRect(170, 78, 120, 32);
+    self.uninstallBtn.frame = NSMakeRect(170, 92, 110, 32);
     self.uninstallBtn.bezelStyle = NSBezelStyleRounded;
     [v addSubview:self.uninstallBtn];
 
-    NSButton *test = [NSButton buttonWithTitle:@"Test the dialog"
-                                      target:self action:@selector(testDialog:)];
-    test.frame = NSMakeRect(300, 78, 130, 32);
-    test.bezelStyle = NSBezelStyleRounded;
-    [v addSubview:test];
+    NSButton *testGK = [NSButton buttonWithTitle:@"Test Gatekeeper"
+                                        target:self action:@selector(testDialog:)];
+    testGK.frame = NSMakeRect(285, 92, 115, 32);
+    testGK.bezelStyle = NSBezelStyleRounded;
+    [v addSubview:testGK];
+
+    NSButton *testTCC = [NSButton buttonWithTitle:@"Test Permission"
+                                         target:self action:@selector(testPermission:)];
+    testTCC.frame = NSMakeRect(405, 92, 115, 32);
+    testTCC.bezelStyle = NSBezelStyleRounded;
+    [v addSubview:testTCC];
 
     self.testResult = [NSTextField wrappingLabelWithString:@""];
-    self.testResult.frame = NSMakeRect(20, 54, 480, 20);
+    self.testResult.frame = NSMakeRect(20, 68, 500, 20);
     [v addSubview:self.testResult];
 
     self.primaryCb = [NSButton checkboxWithTitle:
         @"Make “Open Anyway” the default button (accent color, Return key)"
                                           target:self action:@selector(togglePrimary:)];
-    self.primaryCb.frame = NSMakeRect(20, 30, 480, 22);
+    self.primaryCb.frame = NSMakeRect(20, 30, 500, 22);
     self.primaryCb.state = [[NSFileManager defaultManager]
         fileExistsAtPath:primaryFlagPath()] ? NSControlStateValueOn : NSControlStateValueOff;
     [v addSubview:self.primaryCb];
