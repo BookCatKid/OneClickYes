@@ -370,3 +370,85 @@ no root required (everything runs in the user's gui domain):
 Nothing is resident: the LaunchAgent exits immediately, the app is just the
 installer, and CoreServicesUIAgent loads the payload itself each time it
 spawns.
+
+## 11. TCC "Device Control and Data Access" Allow button (verified)
+
+The same injection architecture extends to the native macOS 27 permission
+warning formerly shown for Accessibility. All findings below verified on
+macOS 27 (26A428), SIP disabled.
+
+### Owner and classes
+
+- Dialog owner: `universalAccessAuthWarn`
+  (`/System/Library/PrivateFrameworks/UniversalAccess.framework/Versions/A/Resources/universalAccessAuthWarn.app`),
+  spawned on demand as `gui/<uid>/com.apple.universalaccessAuthWarn`, fed by
+  `com.apple.universalaccessd` / `tccd` over a peer XPC
+  (`com.apple.universalaccessAuthWarn.peer[pid]`).
+- Window controller: `AXASecurityWarningWindowController`
+  (`initWithWarningInfo:`, `awakeFromNib`, `pressOKButton:`,
+  `pressOpenSystemPrefsButton:`, `pressHelpButton:`,
+  `pressDontShowAgainCheckbox:`, `pressDisclosuerTriangle:`).
+- Requester object: `AXAWarningInfo` — carries `pid`, `responsiblePid`,
+  `responsiblePidPath`, `binaryURL`, `bundle`, `resolvedBundle`,
+  `warningType`, `displayType`, plus `shouldShowWarning`,
+  `markBundleAsDenied`, `_tccServiceForWarningType`.
+- The binary holds `com.apple.private.tcc.manager.access.{read,modify}` for
+  `kTCCServiceAccessibility`, `kTCCServicePostEvent`,
+  `kTCCServiceScreenCapture`, `kTCCServiceListenEvent`,
+  `kTCCServiceRemoteDesktop`.
+
+### macOS 27 change vs older Accessibility prompts
+
+This dialog has **no approve path at all**. Buttons are "Open System
+Settings" (opens the Privacy pane URL), "Deny" (`pressOKButton:` — disassembly
+shows it only dismisses the window; it writes nothing), and a help icon.
+Denial is persisted separately via `markBundleAsDenied`
+(`TCCAccessSetFor{Bundle,Path}(service, subject, NULL)`), invoked when
+`shouldShowWarning` is false or "don't show again" is set. The don't-show
+list lives in `~/Library/Preferences/com.apple.universalaccessAuthWarning.plist`
+(`<warningType>::<identifier>` keys; type 0 = Accessibility).
+
+### The grant operation (verified)
+
+`warningInfo._tccServiceForWarningType` maps the warning to its TCC service
+(type 0 → `kTCCServiceAccessibility`, verified live). The symmetric grant is:
+
+```
+TCCAccessSetForBundle(service, CFBundle(bundleURL), @{ kTCCInfoGranted: @YES })
+```
+
+with `TCCAccessSetForPath(service, path, @{ kTCCInfoGranted: @YES })` as
+fallback. Verified end to end: after the call, `TCCAccessCopyInformation`
+shows `kTCCInfoGranted = 1` with a proper designated-requirement code
+identity (`kTCCCodeIdentityIdentifier = com.example.axprobe6`, cdhash DR) —
+a real durable grant, and the requester reports
+`AXIsProcessTrustedWithOptions` → `trusted=1` on relaunch.
+
+### Injection (verified)
+
+The domain-wide `DYLD_INSERT_LIBRARIES` already reaches
+`universalAccessAuthWarn`; the dylib's self-gate gained a second branch:
+if the executable path contains `universalAccessAuthWarn`, swizzle
+`-[AXASecurityWarningWindowController awakeFromNib]` and append an "Allow"
+`NSButton` to the window's button bar. TCC symbols are `dlsym`'d (not
+linked) so the private framework never enters the load dependencies of other
+processes. On click, the handler pulls `warningInfo` off the window
+controller — real requester identity, not display text — resolves the
+service, calls the grant API, then dismisses via Apple's own
+`pressOKButton:`.
+
+Verified on screen: dialog renders "…would like to control this Mac and
+access your data" with Allow between Help and Open System Settings; clicking
+Allow logged `rc=1`, produced the granted record, and closed the dialog.
+Clicking Deny on a second probe left the requester untrusted (`trusted=0`,
+no record written). No grant occurs without an explicit click.
+
+### Requester caveats
+
+- The warning only appears for well-formed GUI-app requesters: a bare
+  command-line binary launched via `open` gets `displayType != 0` in
+  `AXAWarningInfo` → `shouldShowWarning` returns NO → the agent auto-denies
+  without UI. Test requesters need `NSApplicationMain` (a real run loop);
+  LS-registered or not is not the deciding factor.
+- A requester that exits before the agent evaluates it is auto-denied too
+  (peer XPC dead → nothing to warn about).
