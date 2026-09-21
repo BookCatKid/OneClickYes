@@ -187,9 +187,12 @@ static NSMutableAttributedString *joinLines(NSArray<NSAttributedString *> *ls) {
     NSMutableAttributedString *out = [NSMutableAttributedString new];
     NSMutableParagraphStyle *p = [NSMutableParagraphStyle new];
     p.lineSpacing = 6;
+    BOOL first = YES;
     for (NSAttributedString *l in ls) {
+        if (!first)
+            [out appendAttributedString:[[NSAttributedString alloc] initWithString:@"\n"]];
         [out appendAttributedString:l];
-        [out appendAttributedString:[[NSAttributedString alloc] initWithString:@"\n"]];
+        first = NO;
     }
     [out addAttribute:NSParagraphStyleAttributeName value:p
                 range:NSMakeRange(0, out.length)];
@@ -217,12 +220,15 @@ static NSTextField *label(NSString *s) {
     return t;
 }
 
-// Vertically center a label's text within a region — height estimation
-// error splits evenly above and below instead of pooling at the bottom.
+// Vertically center a label's text within a region — let AppKit size
+// the field to its content, then center the fitted frame so padding
+// error splits evenly above and below.
 static void centerLabel(NSTextField *t, CGFloat x, CGFloat w,
                         CGFloat y, CGFloat h) {
-    NSSize sz = [t.cell cellSizeForBounds:NSMakeRect(0, 0, w, 10000)];
-    t.frame = NSMakeRect(x, y + (h - sz.height) / 2, w, sz.height);
+    t.preferredMaxLayoutWidth = w;
+    [t sizeToFit];
+    NSRect f = t.frame;
+    t.frame = NSMakeRect(x, y + (h - f.size.height) / 2, w, f.size.height);
 }
 
 static NSBox *card(NSRect f) {
