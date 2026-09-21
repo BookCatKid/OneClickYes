@@ -201,6 +201,16 @@ static NSDictionary *subTextAttrs(void) {
              NSFontAttributeName: [NSFont systemFontOfSize:11]};
 }
 
+// Explicitly non-interactive label — macOS 27 text fields are selectable
+// by default, which lets a click put them in an editing-looking state and
+// strip the attributed-string icons.
+static NSTextField *label(NSString *s) {
+    NSTextField *t = [NSTextField wrappingLabelWithString:s];
+    t.editable = NO;
+    t.selectable = NO;
+    return t;
+}
+
 static NSBox *card(NSRect f) {
     NSBox *b = [[NSBox alloc] initWithFrame:f];
     b.boxType = NSBoxCustom;
@@ -445,7 +455,7 @@ static NSUInteger countMatching(NSArray<NSString *> *lines, NSString *needle) {
 - (void)applicationDidFinishLaunching:(NSNotification *)n {
     migrateLegacyInstall();
     NSWindow *w = [[NSWindow alloc]
-        initWithContentRect:NSMakeRect(0, 0, 540, 540)
+        initWithContentRect:NSMakeRect(0, 0, 540, 500)
                   styleMask:NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|
                             NSWindowStyleMaskMiniaturizable
                     backing:NSBackingStoreBuffered defer:NO];
@@ -454,22 +464,22 @@ static NSUInteger countMatching(NSArray<NSString *> *lines, NSString *needle) {
 
     NSTextField *title = [NSTextField labelWithString:@"One-click approvals for macOS prompts"];
     title.font = [NSFont boldSystemFontOfSize:16];
-    title.frame = NSMakeRect(20, 496, 500, 24);
+    title.frame = NSMakeRect(20, 456, 500, 24);
     [v addSubview:title];
 
-    NSTextField *info = [NSTextField wrappingLabelWithString:
+    NSTextField *info = label(
         @"Both buttons use Apple’s own approval paths — per-app, one explicit "
         @"click. Nothing stays running: the dylib is injected by launchd when "
         @"each dialog process spawns, and ignores every other process on the "
-        @"system."];
+        @"system.");
     info.font = [NSFont systemFontOfSize:12];
     info.textColor = [NSColor secondaryLabelColor];
-    info.frame = NSMakeRect(20, 440, 500, 52);
+    info.frame = NSMakeRect(20, 400, 500, 52);
     [v addSubview:info];
 
-    NSBox *globalCard = card(NSMakeRect(20, 330, 500, 100));
-    self.globalStatus = [NSTextField wrappingLabelWithString:@""];
-    self.globalStatus.frame = NSMakeRect(14, 14, 472, 74);
+    NSBox *globalCard = card(NSMakeRect(20, 296, 500, 96));
+    self.globalStatus = label(@"");
+    self.globalStatus.frame = NSMakeRect(14, 12, 472, 74);
     [globalCard addSubview:self.globalStatus];
     [v addSubview:globalCard];
 
@@ -478,80 +488,80 @@ static NSUInteger countMatching(NSArray<NSString *> *lines, NSString *needle) {
                                                 trackingMode:NSSegmentSwitchTrackingSelectOne
                                                       target:self
                                                       action:@selector(modeChanged:)];
-    self.seg.frame = NSMakeRect(20, 294, 340, 26);
+    self.seg.frame = NSMakeRect(20, 262, 340, 26);
     self.seg.selectedSegment = 0;
     [v addSubview:self.seg];
 
     // ---- Gatekeeper pane ----
-    self.gkPane = card(NSMakeRect(20, 104, 500, 178));
-    self.gkStatus = [NSTextField wrappingLabelWithString:@""];
-    self.gkStatus.frame = NSMakeRect(14, 72, 472, 96);
+    self.gkPane = card(NSMakeRect(20, 64, 500, 188));
+    self.gkStatus = label(@"");
+    self.gkStatus.frame = NSMakeRect(14, 72, 472, 106);
     [self.gkPane addSubview:self.gkStatus];
 
     self.primaryCb = [NSButton checkboxWithTitle:
         @"Make “Open Anyway” the default button (accent color, Return key)"
                                           target:self action:@selector(togglePrimary:)];
-    self.primaryCb.frame = NSMakeRect(14, 40, 472, 22);
+    self.primaryCb.frame = NSMakeRect(14, 36, 472, 22);
     self.primaryCb.state = [[NSFileManager defaultManager]
         fileExistsAtPath:primaryFlagPath()] ? NSControlStateValueOn : NSControlStateValueOff;
     [self.gkPane addSubview:self.primaryCb];
 
     NSButton *testGK = [NSButton buttonWithTitle:@"Test Gatekeeper"
                                         target:self action:@selector(testDialog:)];
-    testGK.frame = NSMakeRect(14, 6, 130, 28);
+    testGK.frame = NSMakeRect(14, 4, 130, 28);
     testGK.bezelStyle = NSBezelStyleRounded;
     testGK.image = [NSImage imageWithSystemSymbolName:@"play.circle"
                                accessibilityDescription:nil];
     testGK.imagePosition = NSImageLeft;
     [self.gkPane addSubview:testGK];
 
-    self.gkResult = [NSTextField wrappingLabelWithString:@""];
+    self.gkResult = label(@"");
     self.gkResult.font = [NSFont systemFontOfSize:11];
-    self.gkResult.frame = NSMakeRect(152, 10, 334, 20);
+    self.gkResult.frame = NSMakeRect(152, 8, 334, 20);
     [self.gkPane addSubview:self.gkResult];
     [v addSubview:self.gkPane];
 
     // ---- Permissions pane ----
-    self.tccPane = card(NSMakeRect(20, 104, 500, 178));
-    self.tccStatus = [NSTextField wrappingLabelWithString:@""];
-    self.tccStatus.frame = NSMakeRect(14, 72, 472, 96);
+    self.tccPane = card(NSMakeRect(20, 64, 500, 188));
+    self.tccStatus = label(@"");
+    self.tccStatus.frame = NSMakeRect(14, 72, 472, 106);
     [self.tccPane addSubview:self.tccStatus];
 
-    NSTextField *tccNote = [NSTextField wrappingLabelWithString:
+    NSTextField *tccNote = label(
         @"Covers Accessibility, Input Monitoring, and Screen Recording warnings "
         @"(plus PostEvent / Remote Desktop). Dialogs that already have a native "
-        @"Allow button are left alone."];
+        @"Allow button are left alone.");
     tccNote.font = [NSFont systemFontOfSize:11];
     tccNote.textColor = [NSColor secondaryLabelColor];
-    tccNote.frame = NSMakeRect(14, 32, 472, 34);
+    tccNote.frame = NSMakeRect(14, 30, 472, 30);
     [self.tccPane addSubview:tccNote];
 
     NSButton *testTCC = [NSButton buttonWithTitle:@"Test Permission"
                                          target:self action:@selector(testPermission:)];
-    testTCC.frame = NSMakeRect(14, 6, 130, 28);
+    testTCC.frame = NSMakeRect(14, 4, 130, 28);
     testTCC.bezelStyle = NSBezelStyleRounded;
     testTCC.image = [NSImage imageWithSystemSymbolName:@"play.circle"
                                 accessibilityDescription:nil];
     testTCC.imagePosition = NSImageLeft;
     [self.tccPane addSubview:testTCC];
 
-    self.tccResult = [NSTextField wrappingLabelWithString:@""];
+    self.tccResult = label(@"");
     self.tccResult.font = [NSFont systemFontOfSize:11];
-    self.tccResult.frame = NSMakeRect(152, 10, 334, 20);
+    self.tccResult.frame = NSMakeRect(152, 8, 334, 20);
     [self.tccPane addSubview:self.tccResult];
     self.tccPane.hidden = YES;
     [v addSubview:self.tccPane];
 
     // ---- bottom bar ----
-    self.message = [NSTextField wrappingLabelWithString:@""];
+    self.message = label(@"");
     self.message.font = [NSFont systemFontOfSize:11];
     self.message.textColor = [NSColor secondaryLabelColor];
-    self.message.frame = NSMakeRect(20, 66, 500, 28);
+    self.message.frame = NSMakeRect(20, 44, 500, 18);
     [v addSubview:self.message];
 
     self.installBtn = [NSButton buttonWithTitle:@"Install & Enable"
                                        target:self action:@selector(install:)];
-    self.installBtn.frame = NSMakeRect(20, 22, 140, 32);
+    self.installBtn.frame = NSMakeRect(20, 12, 140, 32);
     self.installBtn.bezelStyle = NSBezelStyleRounded;
     self.installBtn.image = [NSImage imageWithSystemSymbolName:@"arrow.down.to.line"
                                         accessibilityDescription:nil];
@@ -560,7 +570,7 @@ static NSUInteger countMatching(NSArray<NSString *> *lines, NSString *needle) {
 
     self.uninstallBtn = [NSButton buttonWithTitle:@"Uninstall"
                                          target:self action:@selector(uninstall:)];
-    self.uninstallBtn.frame = NSMakeRect(170, 22, 110, 32);
+    self.uninstallBtn.frame = NSMakeRect(170, 12, 110, 32);
     self.uninstallBtn.bezelStyle = NSBezelStyleRounded;
     self.uninstallBtn.image = [NSImage imageWithSystemSymbolName:@"trash"
                                           accessibilityDescription:nil];
