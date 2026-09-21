@@ -32,16 +32,6 @@ NSGraphicsContext.restoreGraphicsState()
 NSColor(srgbRed: 0.08, green: 0.08, blue: 0.09, alpha: 1).set()
 tilePath.fill()
 
-// Inner hairline highlight along the top edge
-NSGraphicsContext.saveGraphicsState()
-tilePath.addClip()
-let hi = NSBezierPath(roundedRect: NSRect(x: tile.minX, y: tile.maxY - 6,
-                                          width: tile.width, height: 6),
-                      xRadius: 3, yRadius: 3)
-NSColor(white: 1, alpha: 0.25).set()
-hi.fill()
-NSGraphicsContext.restoreGraphicsState()
-
 // Bold white checkmark, slightly shadowed
 let check = NSBezierPath()
 check.lineWidth = 150
