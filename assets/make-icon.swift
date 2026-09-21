@@ -30,8 +30,8 @@ NSGraphicsContext.restoreGraphicsState()
 
 // Green gradient, lighter at top
 let grad = NSGradient(colors: [
-    NSColor(srgbRed: 0.36, green: 0.86, blue: 0.46, alpha: 1), // #5CDB75-ish
-    NSColor(srgbRed: 0.16, green: 0.68, blue: 0.36, alpha: 1), // deeper green
+    NSColor(srgbRed: 0.22, green: 0.23, blue: 0.26, alpha: 1), // charcoal top
+    NSColor(srgbRed: 0.05, green: 0.05, blue: 0.07, alpha: 1), // near-black bottom
 ])!
 grad.draw(in: tilePath, angle: -90)
 
