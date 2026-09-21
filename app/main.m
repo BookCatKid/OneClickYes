@@ -1,4 +1,4 @@
-// OneClickYes — installer/controller for the dialog injection.
+// OneClickYes - installer/controller for the dialog injection.
 // Adds "Open Anyway" to Gatekeeper's blocked-app dialog and "Allow" to the
 // TCC permission warnings (Accessibility, Input Monitoring, Screen
 // Recording). No root required: everything runs in the user's gui launchd
@@ -203,18 +203,7 @@ static NSMutableAttributedString *joinLines(NSArray<NSAttributedString *> *ls) {
     return out;
 }
 
-static NSDictionary *subTextAttrs(void) {
-    return @{NSForegroundColorAttributeName: [NSColor secondaryLabelColor],
-             NSFontAttributeName: [NSFont systemFontOfSize:11]};
-}
-
-// Keep "Last:" entries to a single line so the status block height is stable.
-static NSString *oneLine(NSString *s) {
-    if (s.length > 72) s = [[s substringToIndex:69] stringByAppendingString:@"…"];
-    return s;
-}
-
-// Explicitly non-interactive label — macOS 27 text fields are selectable
+// Explicitly non-interactive label - macOS 27 text fields are selectable
 // by default, which lets a click put them in an editing-looking state and
 // strip the attributed-string icons.
 static NSTextField *label(NSString *s) {
@@ -227,7 +216,7 @@ static NSTextField *label(NSString *s) {
 // Vertically center a label's text within a region. The frame gets the
 // cell's fitted height (accurate now that joinLines drops the trailing
 // newline) minus the cell's internal bottom inset, so the top-aligned
-// text block itself lands centered — and stays a few pts taller than
+// text block itself lands centered - and stays a few pts taller than
 // the glyphs so nothing clips.
 static void centerLabel(NSTextField *t, CGFloat x, CGFloat w,
                         CGFloat y, CGFloat h) {
@@ -244,19 +233,6 @@ static NSBox *card(NSRect f) {
     return b;
 }
 
-static NSArray<NSString *> *logLines(void) {
-    NSString *s = [NSString stringWithContentsOfFile:logPath()
-                    encoding:NSUTF8StringEncoding error:nil];
-    return [s componentsSeparatedByCharactersInSet:
-            [NSCharacterSet newlineCharacterSet]];
-}
-
-static NSUInteger countMatching(NSArray<NSString *> *lines, NSString *needle) {
-    NSUInteger n = 0;
-    for (NSString *l in lines) if ([l containsString:needle]) n++;
-    return n;
-}
-
 - (void)refresh {
     BOOL sip = sipDisabled();
     BOOL env = envActive();
@@ -270,7 +246,7 @@ static NSUInteger countMatching(NSArray<NSString *> *lines, NSString *needle) {
     self.globalStatus.attributedStringValue = joinLines(@[
         statusLine(sip ? @"checkmark.shield.fill" : @"xmark.octagon.fill",
                    sip ? green : red,
-                   sip ? @"SIP disabled (required)" : @"SIP ENABLED — injection cannot work", nil),
+                   sip ? @"SIP disabled (required)" : @"SIP ENABLED: injection cannot work", nil),
         statusLine(plistInstalled ? @"checkmark.circle.fill" : @"minus.circle",
                    plistInstalled ? green : gray,
                    [NSString stringWithFormat:@"LaunchAgent (auto-apply at login): %@",
@@ -282,70 +258,46 @@ static NSUInteger countMatching(NSArray<NSString *> *lines, NSString *needle) {
     ]);
     centerLabel(self.globalStatus, 14, 472, 0, 88);
 
-    NSArray<NSString *> *lines = logLines();
-
-    // --- Gatekeeper pane stats ---
+    // --- Gatekeeper pane ---
     pid_t agent = procPID(@"CoreServicesUIAgent");
-    NSUInteger added = countMatching(lines, @"added Open Anyway button");
-    NSString *gkLast = nil;
-    for (NSString *l in lines.reverseObjectEnumerator)
-        if ([l containsString:@"alert="] || [l containsString:@"Open Anyway"]) { gkLast = l; break; }
-    NSMutableArray *gk = [NSMutableArray array];
     BOOL gkLoaded = procLoaded(agent);
     BOOL gkOff = [[NSFileManager defaultManager]
         fileExistsAtPath:flagPath(@"disabled.gk")];
-    [gk addObject:statusLine(
-        gkOff ? @"minus.circle" :
-            (gkLoaded ? @"checkmark.circle.fill" :
-             (agent ? @"exclamationmark.circle.fill" : @"clock")),
-        gkOff ? gray : (gkLoaded ? green : (agent ? yellow : gray)),
-        gkOff ? @"CoreServicesUIAgent: hook disabled" :
-        [NSString stringWithFormat:@"CoreServicesUIAgent: %@",
-         gkLoaded ? @"running — hook active" :
-         (agent ? @"running — hook NOT loaded yet" : @"loads on next Gatekeeper dialog")], nil)];
-    [gk addObject:statusLine(@"chart.bar.fill", gray,
-        [NSString stringWithFormat:@"“Open Anyway” added to %lu dialog%@",
-         (unsigned long)added, added == 1 ? @"" : @"s"], nil)];
-    if (gkLast)
-        [gk addObject:statusLine(@"clock", gray,
-            [NSString stringWithFormat:@"Last: %@", oneLine(gkLast)], subTextAttrs())];
-    self.gkStatus.attributedStringValue = joinLines(gk);
-    centerLabel(self.gkStatus, 14, 472, 106, 66);
+    self.gkStatus.attributedStringValue = joinLines(@[
+        statusLine(
+            gkOff ? @"minus.circle" :
+                (gkLoaded ? @"checkmark.circle.fill" :
+                 (agent ? @"exclamationmark.circle.fill" : @"clock")),
+            gkOff ? gray : (gkLoaded ? green : (agent ? yellow : gray)),
+            gkOff ? @"CoreServicesUIAgent: hook disabled" :
+            [NSString stringWithFormat:@"CoreServicesUIAgent: %@",
+             gkLoaded ? @"running, hook active" :
+             (agent ? @"running, hook NOT loaded yet" : @"loads on next Gatekeeper dialog")], nil),
+    ]);
+    centerLabel(self.gkStatus, 14, 472, 96, 26);
 
-    // --- Permissions pane stats ---
+    // --- Permissions pane ---
     pid_t warn = procPID(kWarnSvc);
-    NSUInteger tccAdded = countMatching(lines, @"added Allow button");
-    NSUInteger granted = countMatching(lines, @"granted verified");
-    NSString *tccLast = nil;
-    for (NSString *l in lines.reverseObjectEnumerator)
-        if ([l containsString:@"allow:"] || [l containsString:@"Allow button"]) { tccLast = l; break; }
-    NSMutableArray *tc = [NSMutableArray array];
     BOOL tccLoaded = procLoaded(warn);
     BOOL tccOff = [[NSFileManager defaultManager]
         fileExistsAtPath:flagPath(@"disabled.tcc")];
-    [tc addObject:statusLine(
-        tccOff ? @"minus.circle" : (tccLoaded ? @"checkmark.circle.fill" : @"clock"),
-        tccOff ? gray : (tccLoaded ? green : gray),
-        tccOff ? @"universalAccessAuthWarn: hook disabled" :
-        [NSString stringWithFormat:@"universalAccessAuthWarn: %@",
-         tccLoaded ? @"running — hook active" : @"loads on next permission dialog"], nil)];
-    [tc addObject:statusLine(@"chart.bar.fill", gray,
-        [NSString stringWithFormat:@"“Allow” added to %lu dialog%@ — %lu grant%@ verified",
-         (unsigned long)tccAdded, tccAdded == 1 ? @"" : @"s",
-         (unsigned long)granted, granted == 1 ? @"" : @"s"], nil)];
-    if (tccLast)
-        [tc addObject:statusLine(@"clock", gray,
-            [NSString stringWithFormat:@"Last: %@", oneLine(tccLast)], subTextAttrs())];
-    self.tccStatus.attributedStringValue = joinLines(tc);
-    centerLabel(self.tccStatus, 14, 472, 112, 60);
+    self.tccStatus.attributedStringValue = joinLines(@[
+        statusLine(
+            tccOff ? @"minus.circle" : (tccLoaded ? @"checkmark.circle.fill" : @"clock"),
+            tccOff ? gray : (tccLoaded ? green : gray),
+            tccOff ? @"universalAccessAuthWarn: hook disabled" :
+            [NSString stringWithFormat:@"universalAccessAuthWarn: %@",
+             tccLoaded ? @"running, hook active" : @"loads on next permission dialog"], nil),
+    ]);
+    centerLabel(self.tccStatus, 14, 472, 96, 26);
 
     // A test app proves success by writing its marker file from its own code.
     [self pollPending:&_gkPending marker:self.gkMarker start:self.gkStart
                result:self.gkResult
-              success:@"\u2713 Test app launched — the Open Anyway button works"];
+              success:@"\u2713 Test app launched, the Open Anyway button works"];
     [self pollPending:&_tccPending marker:self.tccMarker start:self.tccStart
                result:self.tccResult
-              success:@"\u2713 App granted Accessibility — the Allow button works"];
+              success:@"\u2713 App granted Accessibility, the Allow button works"];
 
     self.installBtn.enabled = sip && !env;
     self.uninstallBtn.enabled = plistInstalled || env;
@@ -360,7 +312,7 @@ static NSUInteger countMatching(NSArray<NSString *> *lines, NSString *needle) {
         result.textColor = [NSColor systemGreenColor];
     } else if (start && [[NSDate date] timeIntervalSinceDate:start] > 130) {
         *pending = NO;
-        result.stringValue = @"Test timed out — the app was not approved. Try again.";
+        result.stringValue = @"Test timed out: the app was not approved. Try again.";
         result.textColor = [NSColor secondaryLabelColor];
     }
 }
@@ -440,8 +392,8 @@ static NSUInteger countMatching(NSArray<NSString *> *lines, NSString *needle) {
     }
     kickstartAgent();   // respawn the uiagent so the flag takes effect now
     self.message.stringValue = cb.state == NSControlStateValueOn
-        ? @"Hook enabled — applies when the dialog process next spawns."
-        : @"Hook disabled — applies when the dialog process next spawns.";
+        ? @"Hook enabled; applies when the dialog process next spawns."
+        : @"Hook disabled; applies when the dialog process next spawns.";
     [self refresh];
 }
 
@@ -473,7 +425,7 @@ static NSUInteger countMatching(NSArray<NSString *> *lines, NSString *needle) {
     [[NSFileManager defaultManager] removeItemAtPath:self.gkMarker error:nil];
     self.gkPending = YES;
     self.gkStart = [NSDate date];
-    self.gkResult.stringValue = @"Waiting for the test app to launch — click “Open Anyway” in the dialog";
+    self.gkResult.stringValue = @"Waiting for the test app to launch; click “Open Anyway” in the dialog";
     self.gkResult.textColor = [NSColor secondaryLabelColor];
     // Unsigned + quarantined -> the "could not verify" dialog.
     run(@"/usr/bin/xattr",
@@ -482,7 +434,7 @@ static NSUInteger countMatching(NSArray<NSString *> *lines, NSString *needle) {
            (unsigned long long)time(NULL), [[NSUUID UUID] UUIDString]],
           dst], nil);
     [[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:dst]];
-    self.message.stringValue = @"Test app launched — look for the modified Gatekeeper dialog.";
+    self.message.stringValue = @"Test app launched; look for the modified Gatekeeper dialog.";
 }
 
 - (void)testPermission:(id)sender {
@@ -493,7 +445,7 @@ static NSUInteger countMatching(NSArray<NSString *> *lines, NSString *needle) {
     [[NSFileManager defaultManager] removeItemAtPath:self.tccMarker error:nil];
     self.tccPending = YES;
     self.tccStart = [NSDate date];
-    self.tccResult.stringValue = @"Waiting for the permission dialog — click “Allow”";
+    self.tccResult.stringValue = @"Waiting for the permission dialog; click “Allow”";
     self.tccResult.textColor = [NSColor secondaryLabelColor];
     // Fresh bundle id per copy so it always prompts, then re-sign adhoc.
     NSString *plist = [dst stringByAppendingPathComponent:@"Contents/Info.plist"];
@@ -505,13 +457,13 @@ static NSUInteger countMatching(NSArray<NSString *> *lines, NSString *needle) {
     [info writeToFile:plist atomically:YES];
     run(@"/usr/bin/codesign", @[@"-f", @"-s", @"-", dst], nil);
     [[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:dst]];
-    self.message.stringValue = @"Probe launched — look for the permission dialog with Allow.";
+    self.message.stringValue = @"Probe launched; look for the permission dialog with Allow.";
 }
 
 - (void)applicationDidFinishLaunching:(NSNotification *)n {
     migrateLegacyInstall();
     NSWindow *w = [[NSWindow alloc]
-        initWithContentRect:NSMakeRect(0, 0, 540, 500)
+        initWithContentRect:NSMakeRect(0, 0, 540, 410)
                   styleMask:NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|
                             NSWindowStyleMaskMiniaturizable
                     backing:NSBackingStoreBuffered defer:NO];
@@ -520,20 +472,17 @@ static NSUInteger countMatching(NSArray<NSString *> *lines, NSString *needle) {
 
     NSTextField *title = [NSTextField labelWithString:@"One-click approvals for macOS prompts"];
     title.font = [NSFont boldSystemFontOfSize:16];
-    title.frame = NSMakeRect(20, 456, 500, 24);
+    title.frame = NSMakeRect(20, 372, 500, 24);
     [v addSubview:title];
 
     NSTextField *info = label(
-        @"Both buttons use Apple’s own approval paths — per-app, one explicit "
-        @"click. Nothing stays running: the dylib is injected by launchd when "
-        @"each dialog process spawns, and ignores every other process on the "
-        @"system.");
+        @"Adds the missing approve button to Gatekeeper and permission prompts.");
     info.font = [NSFont systemFontOfSize:12];
     info.textColor = [NSColor secondaryLabelColor];
-    info.frame = NSMakeRect(20, 400, 500, 52);
+    info.frame = NSMakeRect(20, 342, 500, 18);
     [v addSubview:info];
 
-    NSBox *globalCard = card(NSMakeRect(20, 304, 500, 88));
+    NSBox *globalCard = card(NSMakeRect(20, 244, 500, 88));
     self.globalStatus = label(@"");
     self.globalStatus.frame = NSMakeRect(14, 10, 472, 68);
     [globalCard addSubview:self.globalStatus];
@@ -544,19 +493,19 @@ static NSUInteger countMatching(NSArray<NSString *> *lines, NSString *needle) {
                                                 trackingMode:NSSegmentSwitchTrackingSelectOne
                                                       target:self
                                                       action:@selector(modeChanged:)];
-    self.seg.frame = NSMakeRect(20, 262, 340, 26);
+    self.seg.frame = NSMakeRect(100, 210, 340, 26);
     self.seg.selectedSegment = 0;
     [v addSubview:self.seg];
 
     // ---- Gatekeeper pane ----
-    self.gkPane = card(NSMakeRect(20, 70, 500, 186));
+    self.gkPane = card(NSMakeRect(20, 70, 500, 132));
     self.gkStatus = label(@"");
-    self.gkStatus.frame = NSMakeRect(14, 108, 472, 64);
+    self.gkStatus.frame = NSMakeRect(14, 96, 472, 26);
     [self.gkPane addSubview:self.gkStatus];
 
     self.enableGk = [NSButton checkboxWithTitle:@"Enable “Open Anyway” button"
                                          target:self action:@selector(toggleEnable:)];
-    self.enableGk.frame = NSMakeRect(14, 78, 472, 22);
+    self.enableGk.frame = NSMakeRect(14, 66, 472, 22);
     self.enableGk.state = ![[NSFileManager defaultManager]
         fileExistsAtPath:flagPath(@"disabled.gk")];
     [self.gkPane addSubview:self.enableGk];
@@ -564,14 +513,14 @@ static NSUInteger countMatching(NSArray<NSString *> *lines, NSString *needle) {
     self.primaryCb = [NSButton checkboxWithTitle:
         @"Make “Open Anyway” the default button (accent color, Return key)"
                                           target:self action:@selector(togglePrimary:)];
-    self.primaryCb.frame = NSMakeRect(14, 54, 472, 22);
+    self.primaryCb.frame = NSMakeRect(14, 42, 472, 22);
     self.primaryCb.state = [[NSFileManager defaultManager]
         fileExistsAtPath:primaryFlagPath()] ? NSControlStateValueOn : NSControlStateValueOff;
     [self.gkPane addSubview:self.primaryCb];
 
     NSButton *testGK = [NSButton buttonWithTitle:@"Test Gatekeeper"
                                         target:self action:@selector(testDialog:)];
-    testGK.frame = NSMakeRect(14, 16, 130, 28);
+    testGK.frame = NSMakeRect(14, 8, 130, 28);
     testGK.bezelStyle = NSBezelStyleRounded;
     testGK.image = [NSImage imageWithSystemSymbolName:@"play.circle"
                                accessibilityDescription:nil];
@@ -580,35 +529,26 @@ static NSUInteger countMatching(NSArray<NSString *> *lines, NSString *needle) {
 
     self.gkResult = label(@"");
     self.gkResult.font = [NSFont systemFontOfSize:11];
-    self.gkResult.frame = NSMakeRect(152, 20, 334, 20);
+    self.gkResult.frame = NSMakeRect(152, 12, 334, 20);
     [self.gkPane addSubview:self.gkResult];
     [v addSubview:self.gkPane];
 
     // ---- Permissions pane ----
-    self.tccPane = card(NSMakeRect(20, 70, 500, 186));
+    self.tccPane = card(NSMakeRect(20, 70, 500, 132));
     self.tccStatus = label(@"");
-    self.tccStatus.frame = NSMakeRect(14, 112, 472, 60);
+    self.tccStatus.frame = NSMakeRect(14, 96, 472, 26);
     [self.tccPane addSubview:self.tccStatus];
-
-    NSTextField *tccNote = label(
-        @"Covers Accessibility, Input Monitoring, and Screen Recording warnings "
-        @"(plus PostEvent / Remote Desktop). Dialogs that already have a native "
-        @"Allow button are left alone.");
-    tccNote.font = [NSFont systemFontOfSize:11];
-    tccNote.textColor = [NSColor secondaryLabelColor];
-    tccNote.frame = NSMakeRect(14, 82, 472, 30);
-    [self.tccPane addSubview:tccNote];
 
     self.enableTcc = [NSButton checkboxWithTitle:@"Enable “Allow” button"
                                           target:self action:@selector(toggleEnable:)];
-    self.enableTcc.frame = NSMakeRect(14, 56, 472, 22);
+    self.enableTcc.frame = NSMakeRect(14, 60, 472, 22);
     self.enableTcc.state = ![[NSFileManager defaultManager]
         fileExistsAtPath:flagPath(@"disabled.tcc")];
     [self.tccPane addSubview:self.enableTcc];
 
     NSButton *testTCC = [NSButton buttonWithTitle:@"Test Permission"
                                          target:self action:@selector(testPermission:)];
-    testTCC.frame = NSMakeRect(14, 16, 130, 28);
+    testTCC.frame = NSMakeRect(14, 20, 130, 28);
     testTCC.bezelStyle = NSBezelStyleRounded;
     testTCC.image = [NSImage imageWithSystemSymbolName:@"play.circle"
                                 accessibilityDescription:nil];
@@ -617,7 +557,7 @@ static NSUInteger countMatching(NSArray<NSString *> *lines, NSString *needle) {
 
     self.tccResult = label(@"");
     self.tccResult.font = [NSFont systemFontOfSize:11];
-    self.tccResult.frame = NSMakeRect(152, 20, 334, 20);
+    self.tccResult.frame = NSMakeRect(152, 24, 334, 20);
     [self.tccPane addSubview:self.tccResult];
     self.tccPane.hidden = YES;
     [v addSubview:self.tccPane];
